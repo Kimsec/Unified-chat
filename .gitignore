@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.pyo
+.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+venv/
+.venv/
+
+# Secrets & tokens
+.env
+google-client-secret.json
+data/*
+!data/.gitkeep
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Junk files
+=*
+
+# OS
+.DS_Store
+Thumbs.db

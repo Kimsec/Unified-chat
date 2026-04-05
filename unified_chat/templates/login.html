@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Password Required</title>
+    <link rel="icon" href="/static/favicon.ico">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            background:
+                radial-gradient(circle at top left, rgba(145, 70, 255, 0.18), transparent 30%),
+                radial-gradient(circle at top right, rgba(83, 252, 24, 0.12), transparent 26%),
+                linear-gradient(160deg, #09111f 0%, #050910 65%, #020408 100%);
+            color: #eef4ff;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+        }
+
+        .content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+            background: rgba(11, 19, 35, 0.9);
+            border: 1px solid rgba(124, 149, 184, 0.18);
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        }
+
+        img {
+            width: 120px;
+            height: auto;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 36px;
+            text-align: center;
+            margin: 0 0 20px;
+        }
+
+        p {
+            font-size: 16px;
+            text-align: center;
+            line-height: 1.5;
+            margin: 10px 0;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+
+        input[type="password"],
+        button {
+            width: 100%;
+            margin: 10px 0;
+            padding: 15px;
+            font-size: 18px;
+            border-radius: 10px;
+            border: none;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        input[type="password"] {
+            background: rgba(4, 8, 15, 0.72);
+            color: #eef4ff;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        input[type="password"]::placeholder {
+            color: #94a7c4;
+        }
+
+        button {
+            background: linear-gradient(135deg, #d5ff7e, #73f0a8);
+            color: #03070d;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: linear-gradient(135deg, #dfff8e, #86f5b4);
+        }
+
+        .error-text {
+            color: #ff5a5a;
+        }
+
+        footer {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 14px;
+            color: #94a7c4;
+        }
+
+        .heart {
+            color: #ff3b3b;
+        }
+    </style>
+</head>
+<body>
+    <div class="content">
+        <img src="https://kimsec.net/download/caxyhh/icon_logo.png" alt="Unified Chat logo">
+        <h1>Unified Chat</h1>
+        {% if error %}
+            <p class="error-text">{{ error }}</p>
+        {% endif %}
+        <form method="post" action="/login">
+            <input
+                id="passwordInput"
+                type="password"
+                name="password"
+                placeholder="Enter password"
+                autocomplete="current-password"
+                required
+                autofocus>
+            <button type="submit">Login</button>
+        </form>
+    </div>
+
+    <footer>
+        © <span id="year"></span> All Rights Reserved. Made with <span class="heart">❤</span> by Kim AH
+    </footer>
+
+    <script>
+        document.getElementById("year").textContent = new Date().getFullYear();
+        const passwordInput = document.getElementById("passwordInput");
+        if (passwordInput) {
+            passwordInput.addEventListener("keyup", function(event) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    this.form.submit();
+                }
+            });
+            try { passwordInput.focus(); } catch (_) {}
+        }
+    </script>
+</body>
+</html>
