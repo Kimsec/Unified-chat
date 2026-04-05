@@ -1,8 +1,28 @@
-# Unified Chat
+<p align="center">
+  <img width="220" src="Screenshots/logo.png" alt="Stream Control Logo">
+</p>
 
-Unified Chat aggregates live chat from Twitch, YouTube, and Kick into a single UI without relaying messages between platforms. Outbound replies in V1 go to Twitch only, using the same `twitch_tokens.json` already managed by `stream-control`.
+<h1 align="center">Unified Chat</h1>
 
-## What V1 Does
+<p align="center">
+  <strong>Your multistream chat, finally in one place. 🎯</strong><br>
+  One unified chat for Twitch, YouTube, and Kick in a single clean feed.
+</p>
+
+<br><p align="center" width="100%">
+<a href="https://www.buymeacoffee.com/kimsec">
+<img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&amp;emoji=%E2%98%95&amp;slug=kimsec&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Inter&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy Me A Coffee"></a></p>
+<p align="center">
+  <a href="https://github.com/Kimsec/Stream-Control/releases/latest">
+  <img src="https://img.shields.io/github/v/release/kimsec/Stream-Control" alt="Latest Release"></a>
+  <a href="https://github.com/Kimsec/Stream-Control">
+  <img src="https://img.shields.io/badge/Platform-Self%20Hosted-success" alt="Self Hosted"></a>
+  <a href="https://www.buymeacoffee.com/kimsec">
+  <img src="https://img.shields.io/badge/Support-By%20donation-FFDD00?logo=buymeacoffee&logoColor=000" alt="Support"></a>
+</p>
+
+
+## What it does
 
 - Reads Twitch chat via EventSub WebSocket
 - Reads YouTube live chat via YouTube Live Streaming API
