@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="220" src="Screenshots/logo.png" alt="Stream Control Logo">
+  <img width="220" src="unified_chat/static/favicon.ico" alt="Stream Control Logo">
 </p>
 
 <h1 align="center">Unified Chat</h1>
@@ -14,7 +14,6 @@
 <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&amp;emoji=%E2%98%95&amp;slug=kimsec&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Inter&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy Me A Coffee"></a></p>
 <p align="center">
   <a href="https://github.com/Kimsec/Stream-Control/releases/latest">
-  <img src="https://img.shields.io/github/v/release/kimsec/Stream-Control" alt="Latest Release"></a>
   <a href="https://github.com/Kimsec/Stream-Control">
   <img src="https://img.shields.io/badge/Platform-Self%20Hosted-success" alt="Self Hosted"></a>
   <a href="https://www.buymeacoffee.com/kimsec">
