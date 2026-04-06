@@ -55,7 +55,8 @@
 
     <script>
         window.UNIFIED_CHAT_CONFIG = {
-            appBaseUrl: {{ app_base_url | tojson }}
+            appBaseUrl: {{ app_base_url | tojson }},
+            platformNamesOverride: {{ platform_names_override | tojson }}
         };
     </script>
     <script src="{{ url_for('static', path='app.js') }}" defer></script>
