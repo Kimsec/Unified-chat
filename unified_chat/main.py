@@ -152,6 +152,13 @@ def render_login(request: Request, *, error: str | None = None, status_code: int
     )
 
 
+def apply_popout_embed_headers(response) -> None:
+    if "x-frame-options" in response.headers:
+        del response.headers["x-frame-options"]
+    frame_ancestors = ["'self'", *settings.popup_allowed_frame_ancestors]
+    response.headers["Content-Security-Policy"] = f"frame-ancestors {' '.join(dict.fromkeys(frame_ancestors))}"
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if not auth_enabled():
@@ -200,13 +207,17 @@ async def popout(request: Request):
     auth_response = require_browser_auth(request)
     if auth_response is not None:
         return auth_response
-    return templates.TemplateResponse(
+    platform_names_param = request.query_params.get("platform_names")
+    response = templates.TemplateResponse(
         request=request,
         name="popout.html",
         context={
             "app_base_url": settings.app_base_url,
+            "platform_names_override": platform_names_param,
         },
     )
+    apply_popout_embed_headers(response)
+    return response
 
 
 @app.get("/health")
