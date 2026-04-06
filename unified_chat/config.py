@@ -20,6 +20,10 @@ def _split_scopes(value: str) -> list[str]:
     return [part.strip() for part in value.split() if part.strip()]
 
 
+def _split_origins(value: str) -> list[str]:
+    return [part.strip() for part in value.replace(",", " ").split() if part.strip()]
+
+
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -41,6 +45,7 @@ class Settings:
     login_password_hash: str
     session_secret_key: str
     session_cookie_secure: bool
+    popup_allowed_frame_ancestors: list[str]
     database_path: Path
     twitch_client_id: str
     twitch_broadcaster_id: str
@@ -90,6 +95,9 @@ def load_settings() -> Settings:
         login_password_hash=login_password_hash,
         session_secret_key=session_secret_key or "dev-unified-chat-session-key",
         session_cookie_secure=session_cookie_secure,
+        popup_allowed_frame_ancestors=_split_origins(
+            os.getenv("POPUP_ALLOWED_FRAME_ANCESTORS", "https://stream.kimsec.net")
+        ),
         database_path=Path(os.getenv("DATABASE_PATH", str(PROJECT_DIR / "data" / "unified_chat.db"))).expanduser(),
         twitch_client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
         twitch_broadcaster_id=os.getenv("TWITCH_BROADCASTER_ID", "").strip(),
