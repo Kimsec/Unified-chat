@@ -465,14 +465,6 @@ h2 {
 }
 
 .reply-status {
-    margin: 0;
-    padding: 0 12px 6px;
-    color: var(--muted);
-    font-size: 0.82rem;
-    min-height: 0;
-}
-
-.reply-status:empty {
     display: none;
 }
 
@@ -558,6 +550,11 @@ h2 {
     animation: fade-in 220ms ease;
 }
 
+.message-card.system-notice {
+    background: rgba(145, 70, 255, 0.06);
+    border-color: rgba(145, 70, 255, 0.12);
+}
+
 .message-topline {
     display: inline;
     line-height: 1.4;
@@ -603,6 +600,17 @@ h2 {
     margin-right: 4px;
 }
 
+.source-streamer-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    object-fit: cover;
+    vertical-align: text-bottom;
+    margin-right: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+}
+
 .author-name {
     font-weight: 700;
     white-space: nowrap;
@@ -611,6 +619,10 @@ h2 {
 .message-text {
     word-break: break-word;
     font-size: 0.93rem;
+}
+
+.system-notice-text {
+    color: #fff;
 }
 
 .emote {
