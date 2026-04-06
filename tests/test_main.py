@@ -10,7 +10,9 @@ from unified_chat.main import (
     auth_youtube_start,
     get_messages,
     index,
+    login_page,
     login_submit,
+    popout,
     settings,
     websocket_chat,
 )
@@ -24,6 +26,7 @@ def make_request(
     session: dict | None = None,
     app_obj=app,
     host: str = "127.0.0.1",
+    query_string: bytes = b"",
 ):
     async def receive():
         nonlocal body
@@ -39,7 +42,7 @@ def make_request(
         "path": path,
         "raw_path": path.encode("utf-8"),
         "root_path": "",
-        "query_string": b"",
+        "query_string": query_string,
         "headers": [
             (b"content-type", b"application/x-www-form-urlencoded"),
             (b"host", quote(host).encode("utf-8")),
@@ -74,6 +77,7 @@ class MainRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Unified Chat", body)
         self.assertIn(settings.app_base_url, body)
         self.assertIn("/static/styles.css", body)
+        self.assertIsNone(response.headers.get("content-security-policy"))
 
     async def test_index_redirects_to_login_when_auth_enabled_and_unauthenticated(self):
         request = make_request(path="/", session={}, host="unified-chat.kimsec.net")
@@ -153,6 +157,47 @@ class MainRouteTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
+
+    async def test_login_page_does_not_get_popout_embed_headers(self):
+        request = make_request(path="/login", session={}, host="unified-chat.kimsec.net")
+
+        with mock.patch.object(settings, "login_password_hash", "hashed"):
+            response = await login_page(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.headers.get("content-security-policy"))
+        self.assertIsNone(response.headers.get("x-frame-options"))
+
+    async def test_popout_sets_embed_headers_for_stream_control(self):
+        request = make_request(path="/popout")
+
+        with mock.patch.object(settings, "popup_allowed_frame_ancestors", ["https://stream.kimsec.net"]):
+            response = await popout(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("content-security-policy"),
+            "frame-ancestors 'self' https://stream.kimsec.net",
+        )
+        self.assertIsNone(response.headers.get("x-frame-options"))
+
+    async def test_popout_passes_platform_names_override_to_template(self):
+        request = make_request(path="/popout", query_string=b"platform_names=0")
+
+        response = await popout(request)
+
+        body = response.body.decode("utf-8")
+        self.assertIn('platformNamesOverride: "0"', body)
+
+    async def test_popout_redirects_to_login_when_auth_enabled_and_unauthenticated(self):
+        request = make_request(path="/popout", session={}, host="unified-chat.kimsec.net")
+
+        with mock.patch.object(settings, "login_password_hash", "hashed"):
+            response = await popout(request)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login")
+        self.assertIsNone(response.headers.get("content-security-policy"))
 
     async def test_websocket_chat_closes_when_unauthenticated(self):
         websocket = FakeWebSocket(session={}, host="unified-chat.kimsec.net")
