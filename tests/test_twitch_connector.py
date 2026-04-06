@@ -25,6 +25,7 @@ def make_settings(root: Path) -> Settings:
         login_password_hash="",
         session_secret_key="dev-session-key",
         session_cookie_secure=False,
+        popup_allowed_frame_ancestors=["https://stream.kimsec.net"],
         database_path=root / "messages.db",
         twitch_client_id="client-id",
         twitch_broadcaster_id="broadcaster-id",
@@ -91,11 +92,49 @@ def keepalive_packet() -> SimpleNamespace:
     )
 
 
+def notification_packet(subscription_type: str, event: dict, timestamp: str = "2026-04-06T10:00:00Z") -> SimpleNamespace:
+    return SimpleNamespace(
+        type=aiohttp.WSMsgType.TEXT,
+        data=json.dumps(
+            {
+                "metadata": {
+                    "message_type": "notification",
+                    "message_timestamp": timestamp,
+                    "subscription_type": subscription_type,
+                },
+                "payload": {
+                    "subscription": {"type": subscription_type},
+                    "event": event,
+                },
+            }
+        ),
+    )
+
+
+def revocation_packet(subscription_type: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        type=aiohttp.WSMsgType.TEXT,
+        data=json.dumps(
+            {
+                "metadata": {"message_type": "revocation"},
+                "payload": {"subscription": {"type": subscription_type}},
+            }
+        ),
+    )
+
+
 class FakeResponse:
-    def __init__(self, status: int, text: str = "", headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        text: str = "",
+        headers: dict[str, str] | None = None,
+        json_data: dict | None = None,
+    ) -> None:
         self.status = status
         self._text = text
         self.headers = headers or {}
+        self._json_data = json_data
 
     async def __aenter__(self):
         return self
@@ -105,6 +144,11 @@ class FakeResponse:
 
     async def text(self) -> str:
         return self._text
+
+    async def json(self, content_type=None) -> dict:
+        if self._json_data is not None:
+            return self._json_data
+        return {}
 
 
 class FakePostSession:
@@ -119,6 +163,18 @@ class FakePostSession:
                 "headers": headers or {},
                 "json": json,
                 "timeout": timeout,
+            }
+        )
+        return self._responses.pop(0)
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers or {},
+                "params": params or {},
+                "timeout": timeout,
+                "method": "GET",
             }
         )
         return self._responses.pop(0)
@@ -226,15 +282,31 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.outcome, "rate_limited")
         self.assertEqual(result.retry_at, 145.0)
 
+    async def test_subscribe_chat_notification_uses_notification_type(self):
+        session = FakePostSession([FakeResponse(202, '{"ok":true}')])
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"):
+            result = await self.connector._subscribe_chat_notification(session, "session-1")
+
+        self.assertEqual(result.outcome, "ok")
+        self.assertEqual(session.calls[0]["json"]["type"], self.connector.CHAT_NOTIFICATION_SUBSCRIPTION)
+
     async def test_run_moves_to_connected_after_welcome_and_subscribe(self):
         websocket = FakeWebSocket([welcome_packet("session-1")], connector=self.connector)
         session = FakeClientSession(websocket)
 
         async def fake_subscribe(_session, _session_id):
+            return SubscribeResult("ok")
+
+        async def fake_subscribe_notification(_session, _session_id):
             self.connector._stop_event.set()
             return SubscribeResult("ok")
 
         with mock.patch.object(self.connector, "_subscribe_chat", side_effect=fake_subscribe), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            side_effect=fake_subscribe_notification,
+        ), mock.patch.object(
             twitch_module.aiohttp,
             "ClientSession",
             return_value=session,
@@ -265,14 +337,23 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         )
         sessions = [session_one, session_two]
         subscribe_calls: list[str] = []
+        notification_calls: list[str] = []
 
         async def fake_subscribe(_session, session_id):
             subscribe_calls.append(session_id)
-            if len(subscribe_calls) == 2:
+            return SubscribeResult("ok")
+
+        async def fake_subscribe_notification(_session, session_id):
+            notification_calls.append(session_id)
+            if len(notification_calls) == 2:
                 self.connector._stop_event.set()
             return SubscribeResult("ok")
 
         with mock.patch.object(self.connector, "_subscribe_chat", side_effect=fake_subscribe), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            side_effect=fake_subscribe_notification,
+        ), mock.patch.object(
             twitch_module.aiohttp,
             "ClientSession",
             side_effect=lambda: sessions.pop(0),
@@ -280,6 +361,7 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
             await self.connector.run()
 
         self.assertEqual(subscribe_calls, ["session-1", "session-2"])
+        self.assertEqual(notification_calls, ["session-1", "session-2"])
         self.assertEqual(
             session_one.ws_connect_calls,
             [{"url": self.settings.twitch_eventsub_ws_url, "autoping": True}],
@@ -299,6 +381,10 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
             return True
 
         with mock.patch.object(self.connector, "_subscribe_chat", return_value=SubscribeResult("ok")), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            return_value=SubscribeResult("ok"),
+        ), mock.patch.object(
             self.connector,
             "sleep_or_stop",
             side_effect=fake_sleep_or_stop,
@@ -340,10 +426,17 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         session = FakeClientSession(FakeWebSocket([welcome_packet("session-1")], connector=self.connector))
 
         async def fake_subscribe(_session, _session_id):
-            self.connector._stop_event.set()
             return SubscribeResult("auth_failed", detail="Twitch subscribe failed 401: unauthorized")
 
+        async def fake_subscribe_notification(_session, _session_id):
+            self.connector._stop_event.set()
+            return SubscribeResult("ok")
+
         with mock.patch.object(self.connector, "_subscribe_chat", side_effect=fake_subscribe), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            side_effect=fake_subscribe_notification,
+        ), mock.patch.object(
             self.connector,
             "_load_access_token",
             return_value="still-present-token",
@@ -358,6 +451,227 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.state, "auth_required")
         self.assertFalse(status.connected)
         self.assertFalse(status.auth_ready)
+
+    async def test_map_message_keeps_normal_twitch_messages_without_source_avatar(self):
+        metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
+        payload = {
+            "event": {
+                "message_id": "msg-1",
+                "broadcaster_user_id": "111",
+                "chatter_user_name": "Kim",
+                "chatter_user_login": "kim",
+                "message": {
+                    "text": "hello",
+                    "fragments": [{"type": "text", "text": "hello"}],
+                },
+                "badges": [],
+            }
+        }
+        session = FakePostSession([])
+
+        message = await self.connector._map_message(session, metadata, payload)
+
+        self.assertIsNotNone(message)
+        self.assertIsNone(message.avatar_url)
+        self.assertEqual(session.calls, [])
+
+    async def test_map_message_shared_chat_fetches_and_caches_source_avatar(self):
+        metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
+        payload = {
+            "event": {
+                "message_id": "msg-2",
+                "broadcaster_user_id": "111",
+                "source_broadcaster_user_id": "222",
+                "source_broadcaster_user_name": "FriendStreamer",
+                "source_broadcaster_user_login": "friendstreamer",
+                "chatter_user_name": "Viewer",
+                "chatter_user_login": "viewer",
+                "message": {
+                    "text": "shared hello",
+                    "fragments": [{"type": "text", "text": "shared hello"}],
+                },
+                "badges": [],
+            }
+        }
+        session = FakePostSession(
+            [
+                FakeResponse(
+                    200,
+                    json_data={
+                        "data": [
+                            {
+                                "id": "222",
+                                "login": "friendstreamer",
+                                "display_name": "FriendStreamer",
+                                "profile_image_url": "https://example.com/friend.jpg",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+        first = await self.connector._map_message(session, metadata, payload)
+        second = await self.connector._map_message(session, metadata, payload)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first.avatar_url, "https://example.com/friend.jpg")
+        self.assertEqual(second.avatar_url, "https://example.com/friend.jpg")
+        get_calls = [call for call in session.calls if call.get("method") == "GET"]
+        self.assertEqual(len(get_calls), 1)
+        self.assertEqual(
+            first.raw_payload["payload"]["event"]["source_broadcaster"]["name"],
+            "FriendStreamer",
+        )
+        self.assertEqual(
+            first.raw_payload["payload"]["event"]["source_broadcaster"]["login"],
+            "friendstreamer",
+        )
+
+    async def test_map_message_shared_chat_still_publishes_without_avatar_on_lookup_failure(self):
+        metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
+        payload = {
+            "event": {
+                "message_id": "msg-3",
+                "broadcaster_user_id": "111",
+                "source_broadcaster_user_id": "333",
+                "source_broadcaster_user_name": "BackupName",
+                "source_broadcaster_user_login": "backuplogin",
+                "chatter_user_name": "Viewer",
+                "chatter_user_login": "viewer",
+                "message": {
+                    "text": "shared hello",
+                    "fragments": [{"type": "text", "text": "shared hello"}],
+                },
+                "badges": [],
+            }
+        }
+        session = FakePostSession([FakeResponse(500, "server error")])
+
+        message = await self.connector._map_message(session, metadata, payload)
+
+        self.assertIsNotNone(message)
+        self.assertIsNone(message.avatar_url)
+        self.assertEqual(
+            message.raw_payload["payload"]["event"]["source_broadcaster"]["name"],
+            "BackupName",
+        )
+        self.assertEqual(
+            message.raw_payload["payload"]["event"]["source_broadcaster"]["login"],
+            "backuplogin",
+        )
+
+    async def test_map_notification_message_creates_system_notice(self):
+        metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
+        payload = {
+            "event": {
+                "message_id": "notice-1",
+                "broadcaster_user_id": "111",
+                "chatter_user_name": "viewer23",
+                "chatter_user_login": "viewer23",
+                "system_message": "viewer23 subscribed at Tier 1.",
+                "notice_type": "sub",
+            }
+        }
+        session = FakePostSession([])
+
+        message = await self.connector._map_notification_message(session, metadata, payload)
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message.message_kind, "system")
+        self.assertEqual(message.notice_type, "sub")
+        self.assertEqual(message.text, "viewer23 subscribed at Tier 1.")
+
+    async def test_map_notification_message_shared_chat_fetches_source_avatar(self):
+        metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
+        payload = {
+            "event": {
+                "message_id": "notice-2",
+                "broadcaster_user_id": "111",
+                "chatter_user_name": "viewer23",
+                "chatter_user_login": "viewer23",
+                "system_message": "viewer23 subscribed at Tier 1.",
+                "notice_type": "shared_chat_sub",
+                "source_broadcaster_user_id": "222",
+                "source_broadcaster_user_name": "FriendStreamer",
+                "source_broadcaster_user_login": "friendstreamer",
+            }
+        }
+        session = FakePostSession(
+            [
+                FakeResponse(
+                    200,
+                    json_data={
+                        "data": [
+                            {
+                                "id": "222",
+                                "login": "friendstreamer",
+                                "display_name": "FriendStreamer",
+                                "profile_image_url": "https://example.com/friend.jpg",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+        message = await self.connector._map_notification_message(session, metadata, payload)
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message.avatar_url, "https://example.com/friend.jpg")
+        self.assertEqual(
+            message.raw_payload["payload"]["event"]["source_broadcaster"]["name"],
+            "FriendStreamer",
+        )
+
+    async def test_notification_revocation_keeps_primary_chat_connected(self):
+        chat_event = {
+            "message_id": "msg-1",
+            "broadcaster_user_id": "111",
+            "chatter_user_name": "Kim",
+            "chatter_user_login": "kim",
+            "message": {
+                "text": "hello",
+                "fragments": [{"type": "text", "text": "hello"}],
+            },
+            "badges": [],
+        }
+        websocket = FakeWebSocket(
+            [
+                welcome_packet("session-1"),
+                notification_packet(self.connector.CHAT_MESSAGE_SUBSCRIPTION, chat_event),
+                revocation_packet(self.connector.CHAT_NOTIFICATION_SUBSCRIPTION),
+            ],
+            connector=self.connector,
+        )
+        session = FakeClientSession(websocket)
+        notification_subscribe_calls = 0
+
+        async def fake_subscribe(_session, _session_id):
+            return SubscribeResult("ok")
+
+        async def fake_subscribe_notification(_session, _session_id):
+            nonlocal notification_subscribe_calls
+            notification_subscribe_calls += 1
+            if notification_subscribe_calls >= 2:
+                self.connector._stop_event.set()
+            return SubscribeResult("ok")
+
+        with mock.patch.object(self.connector, "_subscribe_chat", side_effect=fake_subscribe), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            side_effect=fake_subscribe_notification,
+        ), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=session,
+        ):
+            await self.connector.run()
+
+        status = self.twitch_status()
+        self.assertEqual(status.state, "connected")
+        self.assertTrue(status.connected)
+        self.assertGreaterEqual(notification_subscribe_calls, 2)
 
 
 if __name__ == "__main__":
