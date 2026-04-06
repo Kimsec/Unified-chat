@@ -24,8 +24,16 @@ class SubscribeResult:
 
 class TwitchConnector(BaseConnector):
     platform = "twitch"
+    CHAT_MESSAGE_SUBSCRIPTION = "channel.chat.message"
+    CHAT_NOTIFICATION_SUBSCRIPTION = "channel.chat.notification"
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
+    USERS_URL = "https://api.twitch.tv/helix/users"
+
+    def __init__(self, settings, service) -> None:
+        super().__init__(settings, service)
+        self._source_broadcaster_cache: dict[str, dict[str, str | None]] = {}
+
     def _configured(self) -> bool:
         return bool(
             self.settings.twitch_client_id
@@ -70,7 +78,12 @@ class TwitchConnector(BaseConnector):
 
         return now + 30.0
 
-    async def _subscribe_chat(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+    async def _subscribe_eventsub(
+        self,
+        session: aiohttp.ClientSession,
+        session_id: str,
+        subscription_type: str,
+    ) -> SubscribeResult:
         token = self._load_access_token()
         if not token:
             return SubscribeResult(
@@ -79,7 +92,7 @@ class TwitchConnector(BaseConnector):
             )
 
         body = {
-            "type": "channel.chat.message",
+            "type": subscription_type,
             "version": "1",
             "condition": {
                 "broadcaster_user_id": self.settings.twitch_broadcaster_id,
@@ -124,15 +137,15 @@ class TwitchConnector(BaseConnector):
 
         ok = await _send(token)
         if ok.outcome == "ok":
-            self.log.info("Subscribed to Twitch chat messages")
+            self.log.info("Subscribed to Twitch %s", subscription_type)
             return ok
         if ok.outcome != "auth_failed":
             if ok.outcome == "rate_limited":
                 wait = max(int((ok.retry_at or time.time()) - time.time()), 1)
-                self.log.warning("Twitch rate-limited, waiting %ds before retry", wait)
+                self.log.warning("Twitch rate-limited for %s, waiting %ds before retry", subscription_type, wait)
             return ok
 
-        self.log.warning("Twitch subscribe returned 401, reloading token")
+        self.log.warning("Twitch subscribe returned 401 for %s, reloading token", subscription_type)
         fresh_token = self._load_access_token()
         if not fresh_token:
             return SubscribeResult(
@@ -142,10 +155,98 @@ class TwitchConnector(BaseConnector):
 
         retried = await _send(fresh_token)
         if retried.outcome == "ok":
-            self.log.info("Subscribed to Twitch chat messages")
+            self.log.info("Subscribed to Twitch %s", subscription_type)
         return retried
 
-    def _map_message(self, metadata: dict[str, Any], payload: dict[str, Any]) -> UnifiedMessage | None:
+    async def _subscribe_chat(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.CHAT_MESSAGE_SUBSCRIPTION)
+
+    async def _subscribe_chat_notification(
+        self,
+        session: aiohttp.ClientSession,
+        session_id: str,
+    ) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.CHAT_NOTIFICATION_SUBSCRIPTION)
+
+    async def _resolve_source_broadcaster(
+        self,
+        session: aiohttp.ClientSession,
+        source_broadcaster_user_id: str | None,
+    ) -> str | None:
+        broadcaster_id = str(source_broadcaster_user_id or "").strip()
+        if not broadcaster_id:
+            return None
+
+        cached = self._source_broadcaster_cache.get(broadcaster_id)
+        if cached is not None:
+            return cached.get("avatar_url")
+
+        token = self._load_access_token()
+        if not token:
+            return None
+
+        headers = {
+            "Client-Id": self.settings.twitch_client_id,
+            "Authorization": f"Bearer {token}",
+        }
+        try:
+            async with session.get(
+                self.USERS_URL,
+                headers=headers,
+                params={"id": broadcaster_id},
+                timeout=_HTTP_TIMEOUT,
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    self.log.warning(
+                        "Twitch Get Users failed %d for shared-chat source %s: %s",
+                        response.status,
+                        broadcaster_id,
+                        detail[:200],
+                    )
+                    return None
+                data = await response.json(content_type=None)
+        except Exception as exc:
+            self.log.warning("Twitch source broadcaster lookup error for %s: %s", broadcaster_id, exc)
+            return None
+
+        user = ((data or {}).get("data") or [None])[0] or {}
+        avatar_url = str(user.get("profile_image_url") or "") or None
+        self._source_broadcaster_cache[broadcaster_id] = {
+            "id": broadcaster_id,
+            "avatar_url": avatar_url,
+        }
+        return avatar_url
+
+    async def _build_source_broadcaster(
+        self,
+        session: aiohttp.ClientSession,
+        event: dict[str, Any],
+    ) -> tuple[dict[str, Any], str | None]:
+        source_broadcaster_user_id = str(event.get("source_broadcaster_user_id") or "").strip() or None
+        source_broadcaster = None
+        source_avatar_url = None
+        if source_broadcaster_user_id:
+            source_broadcaster = {
+                "id": source_broadcaster_user_id,
+                "login": str(event.get("source_broadcaster_user_login") or "") or None,
+                "name": str(event.get("source_broadcaster_user_name") or "") or None,
+            }
+            source_avatar_url = await self._resolve_source_broadcaster(session, source_broadcaster_user_id)
+            if source_avatar_url:
+                source_broadcaster["avatar_url"] = source_avatar_url
+            event = {
+                **event,
+                "source_broadcaster": source_broadcaster,
+            }
+        return event, source_avatar_url
+
+    async def _map_message(
+        self,
+        session: aiohttp.ClientSession,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> UnifiedMessage | None:
         event = payload.get("event") or {}
         message = event.get("message") or {}
         fragments = message.get("fragments") or []
@@ -182,6 +283,8 @@ class TwitchConnector(BaseConnector):
                 )
             )
 
+        event, source_avatar_url = await self._build_source_broadcaster(session, event)
+
         return UnifiedMessage(
             id=make_message_key("twitch", message_id),
             platform="twitch",
@@ -190,11 +293,44 @@ class TwitchConnector(BaseConnector):
             author_display_name=str(event.get("chatter_user_name") or event.get("chatter_user_login") or "Unknown"),
             author_login=event.get("chatter_user_login"),
             author_color=event.get("color"),
+            avatar_url=source_avatar_url,
             badges=badges,
             emotes=emotes,
             text=text,
             sent_at=parse_datetime(metadata.get("message_timestamp")) or utcnow(),
-            raw_payload={"metadata": metadata, "payload": payload},
+            raw_payload={"metadata": metadata, "payload": {**payload, "event": event}},
+        )
+
+    async def _map_notification_message(
+        self,
+        session: aiohttp.ClientSession,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> UnifiedMessage | None:
+        event = payload.get("event") or {}
+        message_id = str(event.get("message_id") or "")
+        system_message = str(event.get("system_message") or "").strip()
+        if not message_id or not system_message:
+            return None
+
+        event, source_avatar_url = await self._build_source_broadcaster(session, event)
+
+        return UnifiedMessage(
+            id=make_message_key("twitch", message_id),
+            platform="twitch",
+            platform_message_id=message_id,
+            message_kind="system",
+            notice_type=str(event.get("notice_type") or "") or None,
+            channel_id=str(event.get("broadcaster_user_id") or self.settings.twitch_broadcaster_id),
+            author_display_name=str(event.get("chatter_user_name") or event.get("chatter_user_login") or "Twitch"),
+            author_login=event.get("chatter_user_login"),
+            author_color=event.get("color"),
+            avatar_url=source_avatar_url,
+            badges=[],
+            emotes=[],
+            text=system_message,
+            sent_at=parse_datetime(metadata.get("message_timestamp")) or utcnow(),
+            raw_payload={"metadata": metadata, "payload": {**payload, "event": event}},
         )
 
     async def get_emotes(self) -> list[dict[str, Any]]:
@@ -310,70 +446,106 @@ class TwitchConnector(BaseConnector):
                         requested_reconnect_url: str | None = None
                         disconnect_detail: str | None = None
                         session_id: str | None = None
-                        subscribed = False
-                        next_subscribe_attempt_at = 0.0
+                        subscribed = {
+                            self.CHAT_MESSAGE_SUBSCRIPTION: False,
+                            self.CHAT_NOTIFICATION_SUBSCRIPTION: False,
+                        }
+                        next_subscribe_attempt_at = {
+                            self.CHAT_MESSAGE_SUBSCRIPTION: 0.0,
+                            self.CHAT_NOTIFICATION_SUBSCRIPTION: 0.0,
+                        }
                         keepalive_timeout = 35.0
 
                         while not self._stop_event.is_set():
                             now = time.time()
-                            if session_id and not subscribed and now >= next_subscribe_attempt_at:
-                                result = await self._subscribe_chat(session, session_id)
-                                if result.outcome == "ok":
-                                    subscribed = True
-                                    backoff = 5
-                                    await self.set_status(
-                                        state="connected",
-                                        detail="Listening for chat messages",
-                                        connected=True,
-                                        auth_ready=True,
-                                        last_error=None,
+                            if session_id:
+                                for subscription_type, subscribe_func in (
+                                    (self.CHAT_MESSAGE_SUBSCRIPTION, self._subscribe_chat),
+                                    (self.CHAT_NOTIFICATION_SUBSCRIPTION, self._subscribe_chat_notification),
+                                ):
+                                    if subscribed[subscription_type] or now < next_subscribe_attempt_at[subscription_type]:
+                                        continue
+                                    result = await subscribe_func(session, session_id)
+                                    if result.outcome == "ok":
+                                        subscribed[subscription_type] = True
+                                        backoff = 5
+                                        if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                            await self.set_status(
+                                                state="connected",
+                                                detail="Listening for chat messages",
+                                                connected=True,
+                                                auth_ready=True,
+                                                last_error=None,
+                                            )
+                                        continue
+
+                                    if result.outcome == "rate_limited":
+                                        retry_at = result.retry_at or (time.time() + 30.0)
+                                        next_subscribe_attempt_at[subscription_type] = retry_at
+                                        if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                            wait = max(int(retry_at - time.time()), 1)
+                                            await self.set_status(
+                                                state="rate_limited",
+                                                detail=f"Twitch transport limit reached; retrying in {wait}s",
+                                                connected=False,
+                                                auth_ready=True,
+                                                last_error=result.detail or None,
+                                                last_error_at=utcnow(),
+                                            )
+                                        else:
+                                            self.log.warning(
+                                                "Twitch %s rate-limited; retrying later",
+                                                subscription_type,
+                                            )
+                                        continue
+
+                                    if result.outcome == "auth_failed":
+                                        next_subscribe_attempt_at[subscription_type] = time.time() + 5.0
+                                        if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                            latest_token = self._load_access_token()
+                                            has_token = bool(latest_token)
+                                            if has_token:
+                                                await self.set_status(
+                                                    state="auth_required",
+                                                    detail="Twitch token rejected; waiting for refresh",
+                                                    connected=False,
+                                                    auth_ready=False,
+                                                    last_error=result.detail or "Twitch access token rejected",
+                                                    last_error_at=utcnow(),
+                                                )
+                                            else:
+                                                await self.set_status(
+                                                    state="waiting_for_token",
+                                                    detail=f"No Twitch token available in {self.settings.twitch_tokens_path}",
+                                                    connected=False,
+                                                    auth_ready=False,
+                                                    last_error=result.detail or None,
+                                                    last_error_at=utcnow(),
+                                                )
+                                        else:
+                                            self.log.warning(
+                                                "Twitch %s auth failed; waiting for token refresh",
+                                                subscription_type,
+                                            )
+                                        continue
+
+                                    next_subscribe_attempt_at[subscription_type] = time.time() + (
+                                        15.0 if result.outcome == "retryable_error" else 30.0
                                     )
-                                elif result.outcome == "rate_limited":
-                                    retry_at = result.retry_at or (time.time() + 30.0)
-                                    next_subscribe_attempt_at = retry_at
-                                    wait = max(int(retry_at - time.time()), 1)
-                                    await self.set_status(
-                                        state="rate_limited",
-                                        detail=f"Twitch transport limit reached; retrying in {wait}s",
-                                        connected=False,
-                                        auth_ready=True,
-                                        last_error=result.detail or None,
-                                        last_error_at=utcnow(),
-                                    )
-                                elif result.outcome == "auth_failed":
-                                    next_subscribe_attempt_at = time.time() + 5.0
-                                    latest_token = self._load_access_token()
-                                    has_token = bool(latest_token)
-                                    if has_token:
+                                    if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
                                         await self.set_status(
-                                            state="auth_required",
-                                            detail="Twitch token rejected; waiting for refresh",
+                                            state="subscribing",
+                                            detail="Twitch subscription not ready; staying connected and retrying",
                                             connected=False,
-                                            auth_ready=False,
-                                            last_error=result.detail or "Twitch access token rejected",
-                                            last_error_at=utcnow(),
-                                        )
-                                    else:
-                                        await self.set_status(
-                                            state="waiting_for_token",
-                                            detail=f"No Twitch token available in {self.settings.twitch_tokens_path}",
-                                            connected=False,
-                                            auth_ready=False,
+                                            auth_ready=True,
                                             last_error=result.detail or None,
                                             last_error_at=utcnow(),
                                         )
-                                else:
-                                    next_subscribe_attempt_at = time.time() + (
-                                        15.0 if result.outcome == "retryable_error" else 30.0
-                                    )
-                                    await self.set_status(
-                                        state="subscribing",
-                                        detail="Twitch subscription not ready; staying connected and retrying",
-                                        connected=False,
-                                        auth_ready=True,
-                                        last_error=result.detail or None,
-                                        last_error_at=utcnow(),
-                                    )
+                                    else:
+                                        self.log.warning(
+                                            "Twitch %s not ready yet; staying connected and retrying",
+                                            subscription_type,
+                                        )
 
                             try:
                                 packet = await asyncio.wait_for(
@@ -396,8 +568,14 @@ class TwitchConnector(BaseConnector):
                                     keepalive_timeout = float(
                                         session_info.get("keepalive_timeout_seconds") or 35.0
                                     )
-                                    subscribed = False
-                                    next_subscribe_attempt_at = 0.0
+                                    subscribed = {
+                                        self.CHAT_MESSAGE_SUBSCRIPTION: False,
+                                        self.CHAT_NOTIFICATION_SUBSCRIPTION: False,
+                                    }
+                                    next_subscribe_attempt_at = {
+                                        self.CHAT_MESSAGE_SUBSCRIPTION: 0.0,
+                                        self.CHAT_NOTIFICATION_SUBSCRIPTION: 0.0,
+                                    }
                                     await self.set_status(
                                         state="subscribing",
                                         detail="Connected to Twitch EventSub, subscribing to chat messages",
@@ -423,9 +601,9 @@ class TwitchConnector(BaseConnector):
                                         (payload.get("subscription") or {}).get("type")
                                         or metadata.get("subscription_type")
                                     )
-                                    if subscription_type == "channel.chat.message":
-                                        subscribed = True
-                                        unified = self._map_message(metadata, payload)
+                                    if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                        subscribed[self.CHAT_MESSAGE_SUBSCRIPTION] = True
+                                        unified = await self._map_message(session, metadata, payload)
                                         if unified is not None:
                                             await self.service.publish_message(unified)
                                             await self.set_status(
@@ -435,13 +613,27 @@ class TwitchConnector(BaseConnector):
                                                 auth_ready=True,
                                                 last_event_at=unified.sent_at,
                                             )
+                                    elif subscription_type == self.CHAT_NOTIFICATION_SUBSCRIPTION:
+                                        subscribed[self.CHAT_NOTIFICATION_SUBSCRIPTION] = True
+                                        unified = await self._map_notification_message(session, metadata, payload)
+                                        if unified is not None:
+                                            await self.service.publish_message(unified)
+                                            if subscribed[self.CHAT_MESSAGE_SUBSCRIPTION]:
+                                                await self.set_status(
+                                                    state="connected",
+                                                    detail="Listening for chat messages",
+                                                    connected=True,
+                                                    auth_ready=True,
+                                                    last_event_at=unified.sent_at,
+                                                )
                                     continue
 
                                 if message_type == "revocation":
                                     subscription = payload.get("subscription") or {}
-                                    if subscription.get("type") == "channel.chat.message":
-                                        subscribed = False
-                                        next_subscribe_attempt_at = 0.0
+                                    subscription_type = subscription.get("type")
+                                    if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                        subscribed[self.CHAT_MESSAGE_SUBSCRIPTION] = False
+                                        next_subscribe_attempt_at[self.CHAT_MESSAGE_SUBSCRIPTION] = 0.0
                                         await self.set_status(
                                             state="subscribing",
                                             detail="Twitch subscription revoked; resubscribing",
@@ -450,6 +642,10 @@ class TwitchConnector(BaseConnector):
                                             last_error="Twitch EventSub subscription revoked",
                                             last_error_at=utcnow(),
                                         )
+                                    elif subscription_type == self.CHAT_NOTIFICATION_SUBSCRIPTION:
+                                        subscribed[self.CHAT_NOTIFICATION_SUBSCRIPTION] = False
+                                        next_subscribe_attempt_at[self.CHAT_NOTIFICATION_SUBSCRIPTION] = 0.0
+                                        self.log.warning("Twitch chat notification subscription revoked; resubscribing")
                                     continue
 
                             if packet.type in (
