@@ -47,6 +47,31 @@ class MessageStoreTest(unittest.TestCase):
             self.assertEqual(messages[-1].platform_message_id, "500")
             store.close()
 
+    def test_persists_twitch_system_notice_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MessageStore(Path(temp_dir) / "messages.db")
+            payload = UnifiedMessage(
+                id="twitch:notice:1",
+                platform="twitch",
+                platform_message_id="notice-1",
+                message_kind="system",
+                notice_type="sub",
+                channel_id="1",
+                author_display_name="musYo",
+                author_login="musyo",
+                text="musYo gifted a Tier 1 sub to TouchOfMadness7!",
+                sent_at="2026-04-06T18:00:00+00:00",
+            )
+
+            self.assertTrue(store.add_message(payload))
+
+            messages = store.list_messages(limit=10)
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0].message_kind, "system")
+            self.assertEqual(messages[0].notice_type, "sub")
+            self.assertEqual(messages[0].text, "musYo gifted a Tier 1 sub to TouchOfMadness7!")
+            store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
