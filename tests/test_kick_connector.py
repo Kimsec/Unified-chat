@@ -22,6 +22,7 @@ def make_settings(root: Path) -> Settings:
         login_password_hash="",
         session_secret_key="dev-session-key",
         session_cookie_secure=True,
+        popup_allowed_frame_ancestors=["https://stream.kimsec.net"],
         database_path=root / "messages.db",
         twitch_client_id="client-id",
         twitch_broadcaster_id="broadcaster-id",
