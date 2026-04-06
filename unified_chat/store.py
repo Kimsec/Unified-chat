@@ -31,6 +31,8 @@ class MessageStore:
                     id TEXT PRIMARY KEY,
                     platform TEXT NOT NULL,
                     platform_message_id TEXT NOT NULL,
+                    message_kind TEXT NOT NULL DEFAULT 'chat',
+                    notice_type TEXT,
                     channel_id TEXT,
                     author_display_name TEXT NOT NULL,
                     author_login TEXT,
@@ -52,6 +54,10 @@ class MessageStore:
             )
             # Migration: add emotes_json column if missing
             columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
+            if "message_kind" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN message_kind TEXT NOT NULL DEFAULT 'chat'")
+            if "notice_type" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN notice_type TEXT")
             if "emotes_json" not in columns:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN emotes_json TEXT NOT NULL DEFAULT '[]'")
             self._conn.commit()
@@ -61,6 +67,8 @@ class MessageStore:
             message.id,
             message.platform,
             message.platform_message_id,
+            message.message_kind,
+            message.notice_type,
             message.channel_id,
             message.author_display_name,
             message.author_login,
@@ -78,10 +86,10 @@ class MessageStore:
                 self._conn.execute(
                     """
                     INSERT INTO messages (
-                        id, platform, platform_message_id, channel_id,
+                        id, platform, platform_message_id, message_kind, notice_type, channel_id,
                         author_display_name, author_login, author_color, avatar_url,
                         badges_json, emotes_json, text, sent_at, raw_payload_json, inserted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -130,6 +138,8 @@ class MessageStore:
             id=row["id"],
             platform=row["platform"],
             platform_message_id=row["platform_message_id"],
+            message_kind=row["message_kind"] or "chat",
+            notice_type=row["notice_type"],
             channel_id=row["channel_id"],
             author_display_name=row["author_display_name"],
             author_login=row["author_login"],
