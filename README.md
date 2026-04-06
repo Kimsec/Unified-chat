@@ -239,6 +239,7 @@ With `KICK_BROADCASTER_USER_ID` set, the app uses **client credentials mode** --
 | `LOGIN_PASSWORD_HASH` | No | -- | Werkzeug password hash for UI login; blank disables auth |
 | `SESSION_SECRET_KEY` | Conditionally | -- | Required when `LOGIN_PASSWORD_HASH` is set |
 | `SESSION_COOKIE_SECURE` | No | auto | Force secure session cookie; defaults to true on HTTPS base URLs |
+| `POPUP_ALLOWED_FRAME_ANCESTORS` | No | `https://stream.kimsec.net` | Space/comma-separated HTTPS origins allowed to embed `/popout` |
 | `DATABASE_PATH` | No | `data/unified_chat.db` | SQLite database path |
 | **Twitch** | | | |
 | `TWITCH_CLIENT_ID` | Yes | -- | Twitch app Client ID |
@@ -263,15 +264,17 @@ With `KICK_BROADCASTER_USER_ID` set, the app uses **client credentials mode** --
 
 ## Running as a systemd Service
 
-An example service file is provided in `unified-chat.service.example`.
+A ready-to-install unit file is provided in `unified-chat.service` for the current default layout (`/home/kim3k/unified-chat` on port `8090`).
 
 ```bash
-sudo cp unified-chat.service.example /etc/systemd/system/unified-chat.service
-# Edit the file to update User, Group, WorkingDirectory, EnvironmentFile, and ExecStart
+sudo cp unified-chat.service /etc/systemd/system/unified-chat.service
 sudo systemctl daemon-reload
-sudo systemctl enable unified-chat
 sudo systemctl start unified-chat
 ```
+
+If your username or paths differ, edit `unified-chat.service` first or use `unified-chat.service.example` as a generic template.
+
+`stream-control` can manage `unified-chat.service` automatically, so you do not need to enable it at boot unless you explicitly want it always running.
 
 ## Running Tests
 
