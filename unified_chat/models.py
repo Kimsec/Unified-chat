@@ -23,6 +23,8 @@ class UnifiedMessage(BaseModel):
     id: str
     platform: Literal["twitch", "youtube", "kick"]
     platform_message_id: str
+    message_kind: Literal["chat", "system"] = "chat"
+    notice_type: str | None = None
     channel_id: str | None = None
     author_display_name: str
     author_login: str | None = None
@@ -48,4 +50,3 @@ class ConnectorStatus(BaseModel):
 
 class ReplyRequest(BaseModel):
     message: str
-

@@ -21,7 +21,46 @@ const PLATFORM_SVGS = {
   youtube: `<svg viewBox="0 0 576 512" aria-hidden="true"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
   kick: `<img src="/static/kick-logo.ico" aria-hidden="true">`,
 };
-let showPlatformNames = localStorage.getItem("showPlatformNames") !== "false";
+const PLATFORM_NAMES_STORAGE_KEY = "showPlatformNames";
+const platformNamesChannel = typeof BroadcastChannel !== "undefined"
+  ? new BroadcastChannel("unified-chat-platform-preferences")
+  : null;
+const platformNamesOverride = readPlatformNamesOverride();
+let showPlatformNames = platformNamesOverride ?? readPlatformNamesPreference();
+
+function readPlatformNamesOverride() {
+  const rawValue = window.UNIFIED_CHAT_CONFIG?.platformNamesOverride;
+  if (rawValue == null || rawValue === "") return null;
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (["0", "false", "off", "no"].includes(normalized)) return false;
+  if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  return null;
+}
+
+function readPlatformNamesPreference() {
+  try {
+    return window.localStorage.getItem(PLATFORM_NAMES_STORAGE_KEY) !== "false";
+  } catch (_) {
+    return true;
+  }
+}
+
+function updatePlatformNamesPreference(nextValue, { broadcast = false } = {}) {
+  showPlatformNames = Boolean(nextValue);
+  if (platformNamesOverride === null) {
+    try {
+      window.localStorage.setItem(PLATFORM_NAMES_STORAGE_KEY, String(showPlatformNames));
+    } catch (_) {}
+  }
+  if (toggleNames) {
+    toggleNames.classList.toggle("active", showPlatformNames);
+  }
+  renderStatuses();
+  renderMessages();
+  if (broadcast && platformNamesChannel && platformNamesOverride === null) {
+    platformNamesChannel.postMessage({ type: "showPlatformNames", value: showPlatformNames });
+  }
+}
 
 function platformMarkup(platform) {
   const name = showPlatformNames ? `<span class="platform-name">${PLATFORM_NAMES[platform]}</span>` : "";
@@ -77,9 +116,23 @@ function renderMessages() {
 
   feedEl.innerHTML = visibleMessages.map((message) => {
     const authorStyle = message.author_color ? `style="color:${message.author_color}"` : "";
+    const sourceBroadcaster = message.raw_payload?.payload?.event?.source_broadcaster || null;
+    const isSystemNotice = message.platform === "twitch" && message.message_kind === "system";
+    const sourceAvatar = message.platform === "twitch" && message.avatar_url
+      ? `<img class="source-streamer-avatar" src="${escapeHtml(message.avatar_url)}" alt="" title="${escapeHtml(sourceBroadcaster?.name || sourceBroadcaster?.login || "Shared chat source")}" aria-hidden="true">`
+      : "";
+
+    if (isSystemNotice) {
+      return `
+        <article class="message-card system-notice" data-platform="${message.platform}">
+          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes)}</span></span>
+        </article>
+      `;
+    }
+
     return `
       <article class="message-card" data-platform="${message.platform}">
-        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}<span class="author-name" ${authorStyle}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
+        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
       </article>
     `;
   }).join("");
@@ -240,21 +293,27 @@ if (popoutBtn) {
 const toggleNames = document.getElementById("toggle-platform-names");
 if (toggleNames) {
   toggleNames.classList.toggle("active", showPlatformNames);
+  toggleNames.disabled = platformNamesOverride !== null;
   toggleNames.addEventListener("click", () => {
-    showPlatformNames = !showPlatformNames;
-    localStorage.setItem("showPlatformNames", showPlatformNames);
-    toggleNames.classList.toggle("active", showPlatformNames);
-    renderMessages();
+    updatePlatformNamesPreference(!showPlatformNames, { broadcast: true });
   });
 }
 
 window.addEventListener("storage", (e) => {
-  if (e.key === "showPlatformNames") {
-    showPlatformNames = e.newValue !== "false";
-    if (toggleNames) toggleNames.classList.toggle("active", showPlatformNames);
-    renderMessages();
+  if (platformNamesOverride !== null) return;
+  if (e.key === PLATFORM_NAMES_STORAGE_KEY) {
+    updatePlatformNamesPreference(e.newValue !== "false");
   }
 });
+
+if (platformNamesChannel) {
+  platformNamesChannel.addEventListener("message", (event) => {
+    if (platformNamesOverride !== null) return;
+    if (event.data?.type === "showPlatformNames") {
+      updatePlatformNamesPreference(event.data.value);
+    }
+  });
+}
 
 if (refreshButtonEl) {
   refreshButtonEl.addEventListener("click", () => {
@@ -333,14 +392,10 @@ replyFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(replyFormEl);
   const message = String(formData.get("message") || "").trim();
-  if (!message) {
-    replyStatusEl.textContent = "Write a message first.";
-    return;
-  }
+  if (!message) return;
 
   const submitBtn = replyFormEl.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  replyStatusEl.textContent = "Sending to Twitch...";
   try {
     const response = await fetch("/api/reply/twitch", {
       method: "POST",
@@ -356,9 +411,8 @@ replyFormEl.addEventListener("submit", async (event) => {
       throw new Error(payload.detail || "Unknown Twitch send error");
     }
     replyFormEl.reset();
-    replyStatusEl.textContent = "Sent to Twitch.";
   } catch (error) {
-    replyStatusEl.textContent = error instanceof Error ? error.message : "Failed to send Twitch message.";
+    console.error("Reply failed:", error);
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
