@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
 
@@ -18,6 +19,8 @@ from unified_chat.models import ReplyRequest
 from unified_chat.service import ChatService
 from unified_chat.store import MessageStore
 
+log = logging.getLogger("unified_chat.main")
+
 
 class Runtime:
     def __init__(self, settings: Settings) -> None:
@@ -28,6 +31,8 @@ class Runtime:
         self.youtube = YouTubeConnector(settings, self.service)
         self.kick = KickConnector(settings, self.service)
         self.connectors = [self.twitch, self.youtube, self.kick]
+        self._next_hype_train_backfill_at = 0.0
+        self._hype_train_backfill_ttl_sec = 15.0
 
     async def start(self) -> None:
         for connector in self.connectors:
@@ -37,6 +42,28 @@ class Runtime:
         for connector in reversed(self.connectors):
             await connector.stop()
         self.store.close()
+
+    async def maybe_backfill_hype_train(self) -> None:
+        if self.service.get_hype_train() is not None:
+            return
+
+        now = time.monotonic()
+        if now < self._next_hype_train_backfill_at:
+            return
+        self._next_hype_train_backfill_at = now + self._hype_train_backfill_ttl_sec
+
+        try:
+            hype_train = await self.twitch.get_hype_train_status()
+        except Exception as exc:
+            log.warning("Hype train backfill failed: %s", exc)
+            return
+
+        if hype_train is not None:
+            self.service.set_hype_train(hype_train)
+
+    async def build_bootstrap(self, limit: int = 200) -> dict:
+        await self.maybe_backfill_hype_train()
+        return await self.service.bootstrap_event(limit)
 
 
 settings = load_settings()
@@ -233,10 +260,7 @@ async def health(request: Request):
 async def get_messages(request: Request, limit: int = Query(200, ge=1, le=500)):
     require_json_auth(request)
     runtime = get_runtime(request)
-    return {
-        "messages": [message.model_dump(mode="json") for message in runtime.service.get_messages(limit)],
-        "statuses": [status.model_dump(mode="json") for status in runtime.service.get_statuses()],
-    }
+    return await runtime.build_bootstrap(limit)
 
 
 @app.post("/api/clear-messages")
@@ -275,7 +299,7 @@ async def websocket_chat(websocket: WebSocket):
         return
     runtime = get_runtime(websocket)
     await runtime.service.hub.connect(websocket)
-    await websocket.send_json(await runtime.service.bootstrap_event())
+    await websocket.send_json(await runtime.build_bootstrap())
     try:
         while True:
             await websocket.receive_text()
