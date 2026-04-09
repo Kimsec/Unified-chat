@@ -6,6 +6,7 @@ const state = {
     youtube: true,
     kick: true,
   },
+  hypeTrain: null,
 };
 const MAX_VISIBLE_MESSAGES = 200;
 
@@ -206,6 +207,7 @@ function applyBootstrap(payload) {
   }
   renderStatuses();
   renderMessages();
+  handleHypeTrain(payload.hype_train ?? null);
 }
 
 function handleSocketPayload(payload) {
@@ -222,7 +224,83 @@ function handleSocketPayload(payload) {
   if (payload.type === "status" && payload.status) {
     state.statuses.set(payload.status.platform, payload.status);
     renderStatuses();
+    return;
   }
+  if (payload.type === "hype_train") {
+    handleHypeTrain(payload);
+  }
+}
+
+let hypeTrainEndTimer = null;
+
+function clearHypeTrainTimer() {
+  if (hypeTrainEndTimer) {
+    clearTimeout(hypeTrainEndTimer);
+    hypeTrainEndTimer = null;
+  }
+}
+
+function resetHypeTrainBar() {
+  state.hypeTrain = null;
+  clearHypeTrainTimer();
+  const bar = document.getElementById("hype-train-bar");
+  if (!bar) return;
+  const levelEl = document.getElementById("ht-level");
+  const progressEl = document.getElementById("ht-progress-text");
+  const fillEl = document.getElementById("ht-fill");
+  if (levelEl) levelEl.textContent = "1";
+  if (progressEl) progressEl.textContent = "";
+  if (fillEl) fillEl.style.width = "0%";
+  bar.classList.add("hidden");
+  bar.setAttribute("aria-hidden", "true");
+  delete bar.dataset.phase;
+}
+
+function scheduleHypeTrainHide(delayMs = 5000) {
+  clearHypeTrainTimer();
+  const safeDelay = Math.max(Number(delayMs) || 0, 0);
+  hypeTrainEndTimer = window.setTimeout(() => {
+    resetHypeTrainBar();
+  }, safeDelay);
+}
+
+function handleHypeTrain(data) {
+  if (!data) {
+    resetHypeTrainBar();
+    return;
+  }
+
+  clearHypeTrainTimer();
+  state.hypeTrain = data;
+
+  if (data.phase === "end") {
+    renderHypeTrain(data);
+    scheduleHypeTrainHide(data.hide_after_ms ?? 5000);
+    return;
+  }
+
+  renderHypeTrain(data);
+}
+
+function renderHypeTrain(data) {
+  const bar = document.getElementById("hype-train-bar");
+  if (!bar) return;
+  bar.classList.remove("hidden");
+  bar.setAttribute("aria-hidden", "false");
+  bar.dataset.phase = data.phase || "progress";
+  const levelEl = document.getElementById("ht-level");
+  const progressEl = document.getElementById("ht-progress-text");
+  const fillEl = document.getElementById("ht-fill");
+  if (levelEl) levelEl.textContent = data.level || 1;
+  const progress = data.progress || 0;
+  const goal = data.goal > 0 ? data.goal : 1;
+  const pct = Math.min(Math.round((progress / goal) * 100), 100);
+  if (data.phase === "end") {
+    if (progressEl) progressEl.textContent = `Ended (${progress} / ${goal})`;
+  } else {
+    if (progressEl) progressEl.textContent = `${progress} / ${goal}`;
+  }
+  if (fillEl) fillEl.style.width = `${pct}%`;
 }
 
 async function fetchBootstrap() {
