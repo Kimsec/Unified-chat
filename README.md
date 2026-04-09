@@ -88,6 +88,7 @@ If you already run `stream-control`, you can reuse your existing credentials.
 3. Copy the numeric User ID (e.g. `424350540`)
 
 > Unified Chat reads `twitch_tokens.json` but never writes to it. Token refresh is handled by `stream-control`.
+> For the hype train bar and API backfill after refresh/reconnect, the shared token must also include `channel:read:hype_train`. After adding that scope in `stream-control`, re-authorize so Twitch issues a token with the updated scope set.
 
 ---
 
