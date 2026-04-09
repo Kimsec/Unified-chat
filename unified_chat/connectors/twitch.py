@@ -26,9 +26,14 @@ class TwitchConnector(BaseConnector):
     platform = "twitch"
     CHAT_MESSAGE_SUBSCRIPTION = "channel.chat.message"
     CHAT_NOTIFICATION_SUBSCRIPTION = "channel.chat.notification"
+    HYPE_TRAIN_BEGIN = "channel.hype_train.begin"
+    HYPE_TRAIN_PROGRESS = "channel.hype_train.progress"
+    HYPE_TRAIN_END = "channel.hype_train.end"
+    HYPE_TRAIN_TYPES = frozenset({HYPE_TRAIN_BEGIN, HYPE_TRAIN_PROGRESS, HYPE_TRAIN_END})
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
     USERS_URL = "https://api.twitch.tv/helix/users"
+    HYPE_TRAIN_STATUS_URL = "https://api.twitch.tv/helix/hypetrain/status"
 
     def __init__(self, settings, service) -> None:
         super().__init__(settings, service)
@@ -78,11 +83,21 @@ class TwitchConnector(BaseConnector):
 
         return now + 30.0
 
+    @staticmethod
+    def _coerce_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     async def _subscribe_eventsub(
         self,
         session: aiohttp.ClientSession,
         session_id: str,
         subscription_type: str,
+        *,
+        version: str = "1",
+        condition: dict[str, str] | None = None,
     ) -> SubscribeResult:
         token = self._load_access_token()
         if not token:
@@ -91,13 +106,16 @@ class TwitchConnector(BaseConnector):
                 detail=f"No Twitch token available in {self.settings.twitch_tokens_path}",
             )
 
-        body = {
-            "type": subscription_type,
-            "version": "1",
-            "condition": {
+        if condition is None:
+            condition = {
                 "broadcaster_user_id": self.settings.twitch_broadcaster_id,
                 "user_id": self.settings.twitch_broadcaster_id,
-            },
+            }
+
+        body = {
+            "type": subscription_type,
+            "version": version,
+            "condition": condition,
             "transport": {"method": "websocket", "session_id": session_id},
         }
 
@@ -167,6 +185,100 @@ class TwitchConnector(BaseConnector):
         session_id: str,
     ) -> SubscribeResult:
         return await self._subscribe_eventsub(session, session_id, self.CHAT_NOTIFICATION_SUBSCRIPTION)
+
+    def _hype_train_condition(self) -> dict[str, str]:
+        return {"broadcaster_user_id": self.settings.twitch_broadcaster_id}
+
+    async def _subscribe_hype_train_begin(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.HYPE_TRAIN_BEGIN, version="2", condition=self._hype_train_condition())
+
+    async def _subscribe_hype_train_progress(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.HYPE_TRAIN_PROGRESS, version="2", condition=self._hype_train_condition())
+
+    async def _subscribe_hype_train_end(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.HYPE_TRAIN_END, version="2", condition=self._hype_train_condition())
+
+    def _normalize_hype_train_payload(
+        self,
+        event: dict[str, Any],
+        *,
+        phase: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(event, dict):
+            return None
+
+        hype_train_id = str(event.get("id") or "")
+        if not hype_train_id:
+            return None
+
+        return {
+            "type": "hype_train",
+            "id": hype_train_id,
+            "phase": phase,
+            "level": self._coerce_int(event.get("level"), 1),
+            "progress": self._coerce_int(event.get("progress"), 0),
+            "goal": self._coerce_int(event.get("goal"), 0),
+            "total": self._coerce_int(event.get("total"), 0),
+            "train_type": str(event.get("type") or "") or None,
+            "started_at": event.get("started_at"),
+            "expires_at": event.get("expires_at"),
+            "ended_at": event.get("ended_at"),
+            "cooldown_ends_at": event.get("cooldown_ends_at"),
+        }
+
+    async def get_hype_train_status(self) -> dict[str, Any] | None:
+        token = self._load_access_token()
+        if not token:
+            return None
+
+        headers = {
+            "Client-Id": self.settings.twitch_client_id,
+            "Authorization": f"Bearer {token}",
+        }
+
+        try:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+                async with session.get(
+                    self.HYPE_TRAIN_STATUS_URL,
+                    headers=headers,
+                    params={"broadcaster_id": self.settings.twitch_broadcaster_id},
+                    timeout=_HTTP_TIMEOUT,
+                ) as response:
+                    if response.status == 200:
+                        payload = await response.json(content_type=None)
+                    else:
+                        detail = await response.text()
+                        if response.status == 403:
+                            self.log.warning(
+                                "Twitch hype train status unavailable (missing channel:read:hype_train?): %s",
+                                detail[:200],
+                            )
+                        elif response.status == 401:
+                            self.log.warning("Twitch hype train status auth failed: %s", detail[:200])
+                        else:
+                            self.log.warning(
+                                "Twitch hype train status failed %d: %s",
+                                response.status,
+                                detail[:200],
+                            )
+                        return None
+        except Exception as exc:
+            self.log.warning("Twitch hype train status request error: %s", exc)
+            return None
+
+        items = (payload or {}).get("data") or []
+        if not items:
+            return None
+
+        item = items[0] or {}
+        current = item.get("current", item)
+        if current is None:
+            return None
+
+        normalized = self._normalize_hype_train_payload(current, phase="progress")
+        if normalized is not None:
+            self.log.info("Loaded active Twitch hype train via Helix backfill")
+        return normalized
 
     async def _resolve_source_broadcaster(
         self,
@@ -333,6 +445,23 @@ class TwitchConnector(BaseConnector):
             raw_payload={"metadata": metadata, "payload": {**payload, "event": event}},
         )
 
+    def _map_hype_train_event(
+        self,
+        subscription_type: str,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        event = payload.get("event") or {}
+        phase_map = {
+            self.HYPE_TRAIN_BEGIN: "begin",
+            self.HYPE_TRAIN_PROGRESS: "progress",
+            self.HYPE_TRAIN_END: "end",
+        }
+        phase = phase_map.get(subscription_type)
+        if not phase:
+            return None
+        return self._normalize_hype_train_payload(event, phase=phase)
+
     async def get_emotes(self) -> list[dict[str, Any]]:
         token = self._load_access_token()
         if not token:
@@ -446,23 +575,21 @@ class TwitchConnector(BaseConnector):
                         requested_reconnect_url: str | None = None
                         disconnect_detail: str | None = None
                         session_id: str | None = None
-                        subscribed = {
-                            self.CHAT_MESSAGE_SUBSCRIPTION: False,
-                            self.CHAT_NOTIFICATION_SUBSCRIPTION: False,
-                        }
-                        next_subscribe_attempt_at = {
-                            self.CHAT_MESSAGE_SUBSCRIPTION: 0.0,
-                            self.CHAT_NOTIFICATION_SUBSCRIPTION: 0.0,
-                        }
+                        _all_subs = (
+                            (self.CHAT_MESSAGE_SUBSCRIPTION, self._subscribe_chat),
+                            (self.CHAT_NOTIFICATION_SUBSCRIPTION, self._subscribe_chat_notification),
+                            (self.HYPE_TRAIN_BEGIN, self._subscribe_hype_train_begin),
+                            (self.HYPE_TRAIN_PROGRESS, self._subscribe_hype_train_progress),
+                            (self.HYPE_TRAIN_END, self._subscribe_hype_train_end),
+                        )
+                        subscribed = {st: False for st, _ in _all_subs}
+                        next_subscribe_attempt_at = {st: 0.0 for st, _ in _all_subs}
                         keepalive_timeout = 35.0
 
                         while not self._stop_event.is_set():
                             now = time.time()
                             if session_id:
-                                for subscription_type, subscribe_func in (
-                                    (self.CHAT_MESSAGE_SUBSCRIPTION, self._subscribe_chat),
-                                    (self.CHAT_NOTIFICATION_SUBSCRIPTION, self._subscribe_chat_notification),
-                                ):
+                                for subscription_type, subscribe_func in _all_subs:
                                     if subscribed[subscription_type] or now < next_subscribe_attempt_at[subscription_type]:
                                         continue
                                     result = await subscribe_func(session, session_id)
@@ -568,14 +695,8 @@ class TwitchConnector(BaseConnector):
                                     keepalive_timeout = float(
                                         session_info.get("keepalive_timeout_seconds") or 35.0
                                     )
-                                    subscribed = {
-                                        self.CHAT_MESSAGE_SUBSCRIPTION: False,
-                                        self.CHAT_NOTIFICATION_SUBSCRIPTION: False,
-                                    }
-                                    next_subscribe_attempt_at = {
-                                        self.CHAT_MESSAGE_SUBSCRIPTION: 0.0,
-                                        self.CHAT_NOTIFICATION_SUBSCRIPTION: 0.0,
-                                    }
+                                    subscribed = {st: False for st, _ in _all_subs}
+                                    next_subscribe_attempt_at = {st: 0.0 for st, _ in _all_subs}
                                     await self.set_status(
                                         state="subscribing",
                                         detail="Connected to Twitch EventSub, subscribing to chat messages",
@@ -626,6 +747,11 @@ class TwitchConnector(BaseConnector):
                                                     auth_ready=True,
                                                     last_event_at=unified.sent_at,
                                                 )
+                                    elif subscription_type in self.HYPE_TRAIN_TYPES:
+                                        subscribed[subscription_type] = True
+                                        ht_data = self._map_hype_train_event(subscription_type, metadata, payload)
+                                        if ht_data:
+                                            await self.service.broadcast_hype_train(ht_data)
                                     continue
 
                                 if message_type == "revocation":
@@ -646,6 +772,10 @@ class TwitchConnector(BaseConnector):
                                         subscribed[self.CHAT_NOTIFICATION_SUBSCRIPTION] = False
                                         next_subscribe_attempt_at[self.CHAT_NOTIFICATION_SUBSCRIPTION] = 0.0
                                         self.log.warning("Twitch chat notification subscription revoked; resubscribing")
+                                    elif subscription_type in self.HYPE_TRAIN_TYPES:
+                                        subscribed[subscription_type] = False
+                                        next_subscribe_attempt_at[subscription_type] = 0.0
+                                        self.log.warning("Twitch %s subscription revoked; resubscribing", subscription_type)
                                     continue
 
                             if packet.type in (
