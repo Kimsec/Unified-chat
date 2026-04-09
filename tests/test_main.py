@@ -143,6 +143,22 @@ class MainRouteTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(Exception, "Authentication required"):
                 await get_messages(request)
 
+    async def test_get_messages_returns_runtime_bootstrap_payload(self):
+        payload = {
+            "type": "bootstrap",
+            "messages": [],
+            "statuses": [],
+            "hype_train": {"type": "hype_train", "phase": "progress"},
+        }
+        fake_runtime = SimpleNamespace(build_bootstrap=mock.AsyncMock(return_value=payload))
+        fake_app = SimpleNamespace(state=SimpleNamespace(runtime=fake_runtime))
+        request = make_request(path="/api/messages", app_obj=fake_app)
+
+        response = await get_messages(request, limit=200)
+
+        self.assertEqual(response, payload)
+        fake_runtime.build_bootstrap.assert_awaited_once_with(200)
+
     async def test_auth_youtube_start_redirects_to_login_when_unauthenticated(self):
         fake_app = SimpleNamespace(state=SimpleNamespace(runtime=None))
         request = make_request(
@@ -209,11 +225,12 @@ class MainRouteTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_websocket_chat_allows_local_host_without_login(self):
         websocket = FakeWebSocket(session={}, host="127.0.0.1")
+        bootstrap_payload = {"type": "bootstrap", "messages": [], "statuses": [], "hype_train": None}
 
         fake_runtime = SimpleNamespace(
+            build_bootstrap=mock.AsyncMock(return_value=bootstrap_payload),
             service=SimpleNamespace(
                 hub=SimpleNamespace(connect=mock.AsyncMock(), disconnect=mock.Mock()),
-                bootstrap_event=mock.AsyncMock(return_value={"type": "bootstrap", "messages": [], "statuses": []}),
             )
         )
 
@@ -225,6 +242,8 @@ class MainRouteTest(unittest.IsolatedAsyncioTestCase):
             await websocket_chat(websocket)
 
         self.assertIsNone(websocket.closed_code)
+        fake_runtime.build_bootstrap.assert_awaited_once_with()
+        websocket.send_json.assert_awaited_once_with(bootstrap_payload)
 
 
 if __name__ == "__main__":
