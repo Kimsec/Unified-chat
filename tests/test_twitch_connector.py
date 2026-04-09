@@ -156,6 +156,12 @@ class FakePostSession:
         self._responses = list(responses)
         self.calls: list[dict] = []
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
     def post(self, url, headers=None, json=None, timeout=None):
         self.calls.append(
             {
@@ -217,6 +223,9 @@ class FakeClientSession:
         self.ws_connect_calls.append({"url": url, "autoping": autoping})
         return self.websocket
 
+    def post(self, url, **kwargs):
+        return FakeResponse(202, '{"data":[]}')
+
 
 class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -234,6 +243,7 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
 
     def twitch_status(self):
         return next(status for status in self.service.get_statuses() if status.platform == "twitch")
+
 
     async def test_subscribe_chat_retries_once_on_401(self):
         session = FakePostSession(
@@ -290,6 +300,34 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.outcome, "ok")
         self.assertEqual(session.calls[0]["json"]["type"], self.connector.CHAT_NOTIFICATION_SUBSCRIPTION)
+
+    async def test_hype_train_subscriptions_use_v2_and_broadcaster_only_condition(self):
+        session = FakePostSession(
+            [
+                FakeResponse(202, '{"ok":true}'),
+                FakeResponse(202, '{"ok":true}'),
+                FakeResponse(202, '{"ok":true}'),
+            ]
+        )
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"):
+            await self.connector._subscribe_hype_train_begin(session, "session-1")
+            await self.connector._subscribe_hype_train_progress(session, "session-1")
+            await self.connector._subscribe_hype_train_end(session, "session-1")
+
+        expected_types = [
+            self.connector.HYPE_TRAIN_BEGIN,
+            self.connector.HYPE_TRAIN_PROGRESS,
+            self.connector.HYPE_TRAIN_END,
+        ]
+        for call, expected_type in zip(session.calls, expected_types):
+            self.assertEqual(call["json"]["type"], expected_type)
+            self.assertEqual(call["json"]["version"], "2")
+            self.assertEqual(
+                call["json"]["condition"],
+                {"broadcaster_user_id": self.settings.twitch_broadcaster_id},
+            )
+            self.assertNotIn("user_id", call["json"]["condition"])
 
     async def test_run_moves_to_connected_after_welcome_and_subscribe(self):
         websocket = FakeWebSocket([welcome_packet("session-1")], connector=self.connector)
@@ -581,6 +619,89 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.message_kind, "system")
         self.assertEqual(message.notice_type, "sub")
         self.assertEqual(message.text, "viewer23 subscribed at Tier 1.")
+
+    def test_map_hype_train_event_normalizes_begin_progress_and_end(self):
+        base_event = {
+            "id": "train-1",
+            "level": 2,
+            "progress": 30,
+            "goal": 100,
+            "total": 130,
+            "type": "golden_kappa",
+            "started_at": "2026-04-06T10:00:00Z",
+            "expires_at": "2026-04-06T10:05:00Z",
+        }
+
+        for subscription_type, expected_phase in (
+            (self.connector.HYPE_TRAIN_BEGIN, "begin"),
+            (self.connector.HYPE_TRAIN_PROGRESS, "progress"),
+            (self.connector.HYPE_TRAIN_END, "end"),
+        ):
+            payload = {"event": dict(base_event, ended_at="2026-04-06T10:06:00Z")}
+            result = self.connector._map_hype_train_event(subscription_type, {}, payload)
+            self.assertIsNotNone(result)
+            self.assertEqual(result["phase"], expected_phase)
+            self.assertEqual(result["train_type"], "golden_kappa")
+            self.assertEqual(result["progress"], 30)
+            self.assertEqual(result["goal"], 100)
+
+    async def test_get_hype_train_status_returns_normalized_active_train(self):
+        session = FakePostSession(
+            [
+                FakeResponse(
+                    200,
+                    json_data={
+                        "data": [
+                            {
+                                "id": "train-2",
+                                "level": 4,
+                                "progress": 75,
+                                "goal": 100,
+                                "total": 275,
+                                "type": "golden_kappa",
+                                "started_at": "2026-04-06T10:00:00Z",
+                                "expires_at": "2026-04-06T10:05:00Z",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=session,
+        ):
+            result = await self.connector.get_hype_train_status()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["phase"], "progress")
+        self.assertEqual(result["progress"], 75)
+        self.assertEqual(result["goal"], 100)
+        self.assertEqual(result["train_type"], "golden_kappa")
+        self.assertEqual(session.calls[0]["params"]["broadcaster_id"], self.settings.twitch_broadcaster_id)
+
+    async def test_get_hype_train_status_returns_none_for_empty_or_null_current(self):
+        empty_session = FakePostSession([FakeResponse(200, json_data={"data": []})])
+        null_session = FakePostSession([FakeResponse(200, json_data={"data": [{"current": None}]})])
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=empty_session,
+        ):
+            empty_result = await self.connector.get_hype_train_status()
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=null_session,
+        ):
+            null_result = await self.connector.get_hype_train_status()
+
+        self.assertIsNone(empty_result)
+        self.assertIsNone(null_result)
 
     async def test_map_notification_message_shared_chat_fetches_source_avatar(self):
         metadata = {"message_timestamp": "2026-04-06T10:00:00Z"}
