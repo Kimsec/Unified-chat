@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Chat — Preview</title>
+<style>
+:root {
+    --bg: #09111f;
+    --bg-strong: #050910;
+    --panel: rgba(11, 19, 35, 0.88);
+    --panel-border: rgba(124, 149, 184, 0.18);
+    --text: #eef4ff;
+    --muted: #94a7c4;
+    --twitch: #9146ff;
+    --youtube: #ff3b30;
+    --kick: #53fc18;
+    --shadow: 0 30px 70px rgba(0, 0, 0, 0.35);
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    height: 100%;
+    background:
+        radial-gradient(circle at top left, rgba(145, 70, 255, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(83, 252, 24, 0.12), transparent 26%),
+        linear-gradient(160deg, #09111f 0%, #050910 65%, #020408 100%);
+    color: var(--text);
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+body {
+    display: flex;
+    gap: 24px;
+    padding: 24px;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* === Chat panel (mimics popout) === */
+.chat-shell {
+    width: 460px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.panel {
+    border: 1px solid var(--panel-border);
+    border-radius: 24px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+}
+.feed-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px 8px;
+}
+.panel-header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+/* === Hype train bar === */
+.hype-train-bar {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--panel-border);
+    background: rgba(145, 70, 255, 0.08);
+    max-height: 60px;
+    opacity: 1;
+    overflow: hidden;
+    transition: opacity 500ms ease, max-height 500ms ease, padding 500ms ease;
+}
+.hype-train-bar.hidden {
+    max-height: 0;
+    opacity: 0;
+    padding: 0 14px;
+    border-bottom: none;
+    pointer-events: none;
+}
+.hype-train-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    margin-bottom: 5px;
+}
+.hype-train-label {
+    font-weight: 700;
+    color: var(--text);
+}
+#ht-progress-text {
+    color: var(--muted);
+}
+.hype-train-track {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+.hype-train-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #9146ff, #ffd700);
+    transition: width 400ms ease;
+}
+
+/* === Feed === */
+.feed-wrapper {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.feed {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px 12px;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+}
+.message-card {
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.message-card:last-child {
+    animation: fade-in 220ms ease;
+}
+@keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.message-topline {
+    display: inline;
+    line-height: 1.4;
+}
+.message-time {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-right: 4px;
+}
+.platform-pill {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    color: #fff;
+    margin-right: 2px;
+}
+.platform-pill svg, .platform-pill img {
+    width: 16px; height: 16px; display: block;
+}
+.platform-pill.twitch { background: rgba(145, 70, 255, 0.18); }
+.platform-pill.youtube { background: rgba(255, 59, 48, 0.18); }
+.platform-pill.kick { background: rgba(83, 252, 24, 0.18); color: #d7ffd0; }
+.author-name { font-weight: 700; white-space: nowrap; }
+.message-text { word-break: break-word; font-size: 0.93rem; }
+.message-card.system-notice {
+    background: rgba(145, 70, 255, 0.06);
+    border-color: rgba(145, 70, 255, 0.12);
+}
+.system-notice-text { color: #fff; }
+
+/* === Reply form === */
+.reply-form-inline {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--panel-border);
+    flex-shrink: 0;
+}
+.reply-input {
+    flex: 1;
+    min-width: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(4, 8, 15, 0.72);
+    color: var(--text);
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 0.93rem;
+}
+.emote-toggle {
+    background: none;
+    border: none;
+    font-size: 1.3rem;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 50%;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.primary-button {
+    cursor: pointer;
+    border: 0;
+    border-radius: 999px;
+    padding: 8px 18px;
+    color: #03070d;
+    background: linear-gradient(135deg, #d5ff7e, #73f0a8);
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* === Control panel === */
+.controls {
+    width: 320px;
+    padding: 24px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+    overflow-y: auto;
+}
+.controls h2 {
+    margin: 0 0 16px;
+    font-size: 1.1rem;
+}
+.controls h3 {
+    margin: 18px 0 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.controls button {
+    width: 100%;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 160ms ease;
+}
+.controls button:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+.controls .accent {
+    background: rgba(145, 70, 255, 0.2);
+    border-color: rgba(145, 70, 255, 0.4);
+}
+.controls .accent:hover {
+    background: rgba(145, 70, 255, 0.3);
+}
+.controls input[type="range"] {
+    width: 100%;
+    margin: 6px 0 12px;
+}
+.controls .row {
+    display: flex;
+    gap: 8px;
+}
+.controls .row button { flex: 1; }
+.note {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin: 12px 0;
+    line-height: 1.4;
+}
+</style>
+</head>
+<body>
+
+<div class="chat-shell">
+    <section class="panel feed-panel">
+        <div class="panel-header">
+            <h2>Unified Feed</h2>
+        </div>
+        <div id="hype-train-bar" class="hype-train-bar hidden">
+            <div class="hype-train-info">
+                <span class="hype-train-label">Hype Train Lvl <span id="ht-level">1</span></span>
+                <span id="ht-progress-text"></span>
+            </div>
+            <div class="hype-train-track">
+                <div id="ht-fill" class="hype-train-fill"></div>
+            </div>
+        </div>
+        <div class="feed-wrapper">
+            <div id="feed" class="feed"></div>
+        </div>
+        <form class="reply-form-inline" onsubmit="event.preventDefault()">
+            <input class="reply-input" type="text" placeholder="Reply to Twitch...">
+            <button class="emote-toggle" type="button" title="Emotes">😊</button>
+            <button class="primary-button" type="submit">Send</button>
+        </form>
+    </section>
+</div>
+
+<aside class="controls">
+    <h2>Preview Controls</h2>
+    <p class="note">Standalone demo of Unified Chat. Not connected to any backend.</p>
+
+    <h3>Hype Train</h3>
+    <button class="accent" onclick="htBegin()">Start Hype Train</button>
+    <button onclick="htProgress()">+ Progress</button>
+    <button onclick="htLevelUp()">Level Up</button>
+    <button onclick="htEnd()">End Hype Train</button>
+
+    <h3>Chat messages</h3>
+    <button onclick="addRandomMessage()">+ Random message</button>
+    <button onclick="addBurst()">+ Burst (5 messages)</button>
+    <button onclick="clearChat()">Clear chat</button>
+
+    <h3>Twitch system events</h3>
+    <button onclick="addGiftedSub()">+ Gifted Sub</button>
+    <button onclick="addSub()">+ Subscription</button>
+    <button onclick="addBits()">+ Bits / Cheer</button>
+    <button onclick="addRaid()">+ Raid</button>
+
+    <h3>Display mode</h3>
+    <button onclick="togglePlatformNames()">Toggle platform names</button>
+    <p class="note">In stream-control popout embed, only logos are shown — no platform names.</p>
+
+    <h3>Auto demo</h3>
+    <div class="row">
+        <button onclick="startAuto()">Start auto</button>
+        <button onclick="stopAuto()">Stop</button>
+    </div>
+</aside>
+
+<script>
+// === Platform SVGs ===
+const PLATFORM_SVGS = {
+    twitch: `<svg viewBox="0 0 256 268"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>`,
+    youtube: `<svg viewBox="0 0 576 512"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
+    kick: `<svg viewBox="0 0 16 16"><path fill="#53fc18" d="M3 1h4v5h2V4h2V2h2v4h-2v2h-2v2h2v2h2v4h-2v-2h-2v-2H7v5H3z"/></svg>`,
+};
+
+const FAKE_USERS = [
+    { name: "musYo", color: "#ff4500", platform: "twitch" },
+    { name: "Caxyhh", color: "#9146ff", platform: "twitch" },
+    { name: "snake989", color: "#1e90ff", platform: "twitch" },
+    { name: "shayshaymonkey", color: "#ff69b4", platform: "twitch" },
+    { name: "john_the_bon", color: "#00ff7f", platform: "twitch" },
+    { name: "Eticer", color: "#ffd700", platform: "twitch" },
+    { name: "TwitchPrime_42", color: "#9146ff", platform: "twitch" },
+    { name: "GameWizard", color: "#ff0000", platform: "youtube" },
+    { name: "StreamFan88", color: "#ff3b30", platform: "youtube" },
+    { name: "YTViewer", color: "#ff6347", platform: "youtube" },
+    { name: "KickKing", color: "#53fc18", platform: "kick" },
+    { name: "GreenGamer", color: "#00ff00", platform: "kick" },
+    { name: "NewToKick", color: "#7fff00", platform: "kick" },
+];
+
+const FAKE_MESSAGES = [
+    "Hello everyone!",
+    "GG that was insane",
+    "PogChamp",
+    "First time here, love the stream",
+    "Where can I follow you on socials?",
+    "LUL",
+    "That play was sick!",
+    "Greetings from Norway 🇳🇴",
+    "Hype train incoming!",
+    "Let's gooooo",
+    "Caxyhh is the best",
+    "Can you do a tutorial on this?",
+    "How long have you been streaming?",
+    "This music slaps",
+    "Subbed!",
+    "Tier 3 sub gifted incoming",
+    "What's your setup?",
+    "Big W",
+    "monkaS that was close",
+    "Kappa",
+    "PepeLaugh that play tho",
+    "Why did you do that?? lol",
+    "Stream is fire today",
+    "When's the next stream?",
+    "Insane mechanics",
+];
+
+// === Utilities ===
+function formatTime(date = new Date()) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+let showPlatformNames = true;
+function platformMarkup(p) {
+    const names = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
+    const label = showPlatformNames ? names[p] : "";
+    return `<span class="platform-pill ${p}">${PLATFORM_SVGS[p]}${label}</span>`;
+}
+function togglePlatformNames() {
+    showPlatformNames = !showPlatformNames;
+    // re-render existing messages
+    const cards = feedEl.querySelectorAll(".message-card");
+    cards.forEach(c => {
+        const pill = c.querySelector(".platform-pill");
+        if (!pill) return;
+        const platform = [...pill.classList].find(x => ["twitch","youtube","kick"].includes(x));
+        if (!platform) return;
+        const names = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
+        pill.innerHTML = PLATFORM_SVGS[platform] + (showPlatformNames ? names[platform] : "");
+    });
+}
+
+// === Chat ===
+const feedEl = document.getElementById("feed");
+
+function addMessage(user, text) {
+    const card = document.createElement("article");
+    card.className = "message-card";
+    card.innerHTML = `<span class="message-topline"><span class="message-time">${formatTime()}</span> ${platformMarkup(user.platform)}<span class="author-name" style="color:${user.color}">${escapeHtml(user.name)}:</span> <span class="message-text">${escapeHtml(text)}</span></span>`;
+    feedEl.appendChild(card);
+    feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+function addRandomMessage() {
+    addMessage(pick(FAKE_USERS), pick(FAKE_MESSAGES));
+}
+function addBurst() {
+    for (let i = 0; i < 5; i++) setTimeout(addRandomMessage, i * 200);
+}
+function clearChat() {
+    feedEl.innerHTML = "";
+}
+
+function addSystemMessage(text) {
+    const card = document.createElement("article");
+    card.className = "message-card system-notice";
+    card.innerHTML = `<span class="message-topline"><span class="message-time">${formatTime()}</span> ${platformMarkup("twitch")}<span class="message-text system-notice-text">${escapeHtml(text)}</span></span>`;
+    feedEl.appendChild(card);
+    feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+const TWITCH_USERS = FAKE_USERS.filter(u => u.platform === "twitch");
+function addGiftedSub() {
+    const gifter = pick(TWITCH_USERS);
+    const recipient = pick(TWITCH_USERS.filter(u => u.name !== gifter.name));
+    addSystemMessage(`${gifter.name} gifted a Tier 1 sub to ${recipient.name}!`);
+}
+function addSub() {
+    const user = pick(TWITCH_USERS);
+    const months = 1 + Math.floor(Math.random() * 36);
+    addSystemMessage(`${user.name} subscribed at Tier 1. They've subscribed for ${months} months!`);
+}
+function addBits() {
+    const user = pick(TWITCH_USERS);
+    const amount = pick([100, 500, 1000, 5000]);
+    addSystemMessage(`${user.name} cheered ${amount} bits!`);
+}
+function addRaid() {
+    const user = pick(TWITCH_USERS);
+    const viewers = 5 + Math.floor(Math.random() * 50);
+    addSystemMessage(`${user.name} is raiding with a party of ${viewers}!`);
+}
+
+// === Hype train ===
+let htState = { level: 1, progress: 0, goal: 100, active: false };
+const htBar = document.getElementById("hype-train-bar");
+const htLevel = document.getElementById("ht-level");
+const htText = document.getElementById("ht-progress-text");
+const htFill = document.getElementById("ht-fill");
+
+function renderHt(ended = false) {
+    htLevel.textContent = htState.level;
+    const pct = Math.min(Math.round((htState.progress / htState.goal) * 100), 100);
+    htText.textContent = ended ? `Ended (${htState.progress}/${htState.goal})` : `${htState.progress} / ${htState.goal}`;
+    htFill.style.width = `${pct}%`;
+}
+function htBegin() {
+    htState = { level: 1, progress: 25, goal: 100, active: true };
+    htBar.classList.remove("hidden");
+    renderHt();
+}
+function htProgress() {
+    if (!htState.active) return htBegin();
+    const inc = 10 + Math.floor(Math.random() * 25);
+    htState.progress = Math.min(htState.progress + inc, htState.goal);
+    renderHt();
+    if (htState.progress >= htState.goal) htLevelUp();
+}
+function htLevelUp() {
+    if (!htState.active) return htBegin();
+    htState.level++;
+    htState.progress = 0;
+    htState.goal = 100 + (htState.level - 1) * 50;
+    renderHt();
+}
+function htEnd() {
+    if (!htState.active) return;
+    htState.active = false;
+    renderHt(true);
+    setTimeout(() => htBar.classList.add("hidden"), 5000);
+}
+
+// === Auto demo ===
+let autoTimer = null;
+function startAuto() {
+    stopAuto();
+    autoTimer = setInterval(() => {
+        const r = Math.random();
+        if (htState.active && r < 0.20) {
+            htProgress();
+        } else if (!htState.active && r < 0.03) {
+            htBegin();
+        } else if (r < 0.18) {
+            const sysFn = pick([addGiftedSub, addSub, addBits, addRaid]);
+            sysFn();
+        } else {
+            addRandomMessage();
+        }
+    }, 800);
+}
+function stopAuto() {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
+}
+
+// === Initial seed ===
+addMessage(FAKE_USERS[0], "yo first message");
+addMessage(FAKE_USERS[3], "shayshaymonkey: Hello!!!");
+addMessage(FAKE_USERS[7], "Greetings from YouTube chat 👋");
+addMessage(FAKE_USERS[10], "Kick chatter checking in");
+addMessage(FAKE_USERS[1], "Welcome everyone");
+</script>
+</body>
+</html>
