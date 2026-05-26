@@ -633,8 +633,8 @@ h2 {
         linear-gradient(#0d1626, #0d1626) padding-box,
         conic-gradient(
             from var(--twitch-rainbow-angle),
-            rgba(255, 59, 59, 0.9), rgba(255, 177, 59, 0.9), rgba(245, 238, 58, 0.9), rgba(76, 217, 100, 0.9),
-            rgba(52, 192, 255, 0.9), rgba(106, 92, 255, 0.9), rgba(255, 92, 209, 0.9), rgba(255, 59, 59, 0.9)
+            rgba(255, 59, 59, 0.8), rgba(255, 177, 59, 0.8), rgba(245, 238, 58, 0.8), rgba(76, 217, 100, 0.8),
+            rgba(52, 192, 255, 0.8), rgba(106, 92, 255, 0.8), rgba(255, 92, 209, 0.8), rgba(255, 59, 59, 0.8)
         ) border-box;
     animation: twitch-rainbow-spin 6s linear infinite;
 }
