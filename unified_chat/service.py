@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from typing import Iterable
 
 from unified_chat.hub import WebSocketHub
@@ -38,6 +39,24 @@ class ChatService:
         if inserted:
             await self.hub.broadcast({"type": "message", "message": message.model_dump(mode="json")})
         return inserted
+
+    async def mark_message_deleted(
+        self,
+        platform: str,
+        platform_message_id: str,
+        deleted_at: datetime,
+    ) -> bool:
+        marked = self.store.mark_message_deleted(platform, platform_message_id, deleted_at)
+        if marked:
+            await self.hub.broadcast(
+                {
+                    "type": "message_deleted",
+                    "platform": platform,
+                    "platform_message_id": platform_message_id,
+                    "deleted_at": deleted_at.isoformat(),
+                }
+            )
+        return marked
 
     def _clear_hype_train(self) -> None:
         self._hype_train = None
