@@ -177,6 +177,26 @@ body {
     background: rgba(145, 70, 255, 0.06);
     border-color: rgba(145, 70, 255, 0.12);
 }
+@property --twitch-rainbow-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+.message-card.system-notice[data-platform="twitch"] {
+    border: 2px solid transparent;
+    background:
+        linear-gradient(rgba(145, 70, 255, 0.08), rgba(145, 70, 255, 0.08)) padding-box,
+        linear-gradient(#0d1626, #0d1626) padding-box,
+        conic-gradient(
+            from var(--twitch-rainbow-angle),
+            rgba(255, 59, 59, 0.9), rgba(255, 177, 59, 0.9), rgba(245, 238, 58, 0.9), rgba(76, 217, 100, 0.9),
+            rgba(52, 192, 255, 0.9), rgba(106, 92, 255, 0.9), rgba(255, 92, 209, 0.9), rgba(255, 59, 59, 0.9)
+        ) border-box;
+    animation: twitch-rainbow-spin 6s linear infinite;
+}
+@keyframes twitch-rainbow-spin {
+    to { --twitch-rainbow-angle: 360deg; }
+}
 .system-notice-text { color: #fff; }
 
 /* === Reply form === */
@@ -445,6 +465,7 @@ function clearChat() {
 function addSystemMessage(text) {
     const card = document.createElement("article");
     card.className = "message-card system-notice";
+    card.dataset.platform = "twitch";
     card.innerHTML = `<span class="message-topline"><span class="message-time">${formatTime()}</span> ${platformMarkup("twitch")}<span class="message-text system-notice-text">${escapeHtml(text)}</span></span>`;
     feedEl.appendChild(card);
     feedEl.scrollTop = feedEl.scrollHeight;
@@ -482,7 +503,7 @@ const htFill = document.getElementById("ht-fill");
 function renderHt(ended = false) {
     htLevel.textContent = htState.level;
     const pct = Math.min(Math.round((htState.progress / htState.goal) * 100), 100);
-    htText.textContent = ended ? `Ended (${htState.progress}/${htState.goal})` : `${htState.progress} / ${htState.goal}`;
+    htText.textContent = ended ? `Ended (${pct}%)` : `${pct}%`;
     htFill.style.width = `${pct}%`;
 }
 function htBegin() {
