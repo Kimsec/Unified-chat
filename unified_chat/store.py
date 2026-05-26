@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from unified_chat.models import Badge, Emote, UnifiedMessage
@@ -41,6 +42,7 @@ class MessageStore:
                     badges_json TEXT NOT NULL,
                     text TEXT NOT NULL,
                     sent_at TEXT NOT NULL,
+                    deleted_at TEXT,
                     raw_payload_json TEXT NOT NULL,
                     inserted_at TEXT NOT NULL
                 )
@@ -60,6 +62,8 @@ class MessageStore:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN notice_type TEXT")
             if "emotes_json" not in columns:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN emotes_json TEXT NOT NULL DEFAULT '[]'")
+            if "deleted_at" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN deleted_at TEXT")
             self._conn.commit()
 
     def add_message(self, message: UnifiedMessage) -> bool:
@@ -78,6 +82,7 @@ class MessageStore:
             dumps_json([emote.model_dump() for emote in message.emotes]),
             message.text,
             message.sent_at.isoformat(),
+            message.deleted_at.isoformat() if message.deleted_at else None,
             dumps_json(message.raw_payload),
             utcnow().isoformat(),
         )
@@ -88,8 +93,8 @@ class MessageStore:
                     INSERT INTO messages (
                         id, platform, platform_message_id, message_kind, notice_type, channel_id,
                         author_display_name, author_login, author_color, avatar_url,
-                        badges_json, emotes_json, text, sent_at, raw_payload_json, inserted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        badges_json, emotes_json, text, sent_at, deleted_at, raw_payload_json, inserted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -109,6 +114,24 @@ class MessageStore:
                 return True
             except sqlite3.IntegrityError:
                 return False
+
+    def mark_message_deleted(
+        self,
+        platform: str,
+        platform_message_id: str,
+        deleted_at: datetime,
+    ) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                UPDATE messages
+                SET deleted_at = COALESCE(deleted_at, ?)
+                WHERE platform = ? AND platform_message_id = ?
+                """,
+                (deleted_at.isoformat(), platform, platform_message_id),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     def clear_messages(self) -> None:
         with self._lock:
@@ -149,5 +172,6 @@ class MessageStore:
             emotes=emotes,
             text=row["text"],
             sent_at=row["sent_at"],
+            deleted_at=row["deleted_at"],
             raw_payload=json.loads(row["raw_payload_json"] or "{}"),
         )
