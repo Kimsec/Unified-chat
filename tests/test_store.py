@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from unified_chat.models import UnifiedMessage
@@ -70,6 +71,31 @@ class MessageStoreTest(unittest.TestCase):
             self.assertEqual(messages[0].message_kind, "system")
             self.assertEqual(messages[0].notice_type, "sub")
             self.assertEqual(messages[0].text, "musYo gifted a Tier 1 sub to TouchOfMadness7!")
+            store.close()
+
+    def test_marks_message_deleted_without_removing_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MessageStore(Path(temp_dir) / "messages.db")
+            payload = UnifiedMessage(
+                id="twitch:msg-1",
+                platform="twitch",
+                platform_message_id="msg-1",
+                channel_id="1",
+                author_display_name="Kim",
+                author_login="kim",
+                text="delete me softly",
+                sent_at="2026-04-04T20:00:00+00:00",
+            )
+            deleted_at = datetime(2026, 4, 4, 20, 1, tzinfo=timezone.utc)
+
+            self.assertTrue(store.add_message(payload))
+            self.assertTrue(store.mark_message_deleted("twitch", "msg-1", deleted_at))
+            self.assertFalse(store.mark_message_deleted("twitch", "missing", deleted_at))
+
+            messages = store.list_messages(limit=10)
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0].text, "delete me softly")
+            self.assertEqual(messages[0].deleted_at, deleted_at)
             store.close()
 
 
