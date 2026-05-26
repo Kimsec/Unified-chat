@@ -25,6 +25,7 @@ class SubscribeResult:
 class TwitchConnector(BaseConnector):
     platform = "twitch"
     CHAT_MESSAGE_SUBSCRIPTION = "channel.chat.message"
+    CHAT_MESSAGE_DELETE_SUBSCRIPTION = "channel.chat.message_delete"
     CHAT_NOTIFICATION_SUBSCRIPTION = "channel.chat.notification"
     HYPE_TRAIN_BEGIN = "channel.hype_train.begin"
     HYPE_TRAIN_PROGRESS = "channel.hype_train.progress"
@@ -185,6 +186,13 @@ class TwitchConnector(BaseConnector):
         session_id: str,
     ) -> SubscribeResult:
         return await self._subscribe_eventsub(session, session_id, self.CHAT_NOTIFICATION_SUBSCRIPTION)
+
+    async def _subscribe_chat_message_delete(
+        self,
+        session: aiohttp.ClientSession,
+        session_id: str,
+    ) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.CHAT_MESSAGE_DELETE_SUBSCRIPTION)
 
     def _hype_train_condition(self) -> dict[str, str]:
         return {"broadcaster_user_id": self.settings.twitch_broadcaster_id}
@@ -462,6 +470,21 @@ class TwitchConnector(BaseConnector):
             return None
         return self._normalize_hype_train_payload(event, phase=phase)
 
+    async def _handle_message_delete(
+        self,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        event = payload.get("event") or {}
+        message_id = str(event.get("message_id") or "").strip()
+        if not message_id:
+            return
+
+        deleted_at = parse_datetime(metadata.get("message_timestamp")) or utcnow()
+        marked = await self.service.mark_message_deleted("twitch", message_id, deleted_at)
+        if not marked:
+            self.log.info("Twitch delete event for unknown message %s", message_id)
+
     async def get_emotes(self) -> list[dict[str, Any]]:
         token = self._load_access_token()
         if not token:
@@ -578,6 +601,7 @@ class TwitchConnector(BaseConnector):
                         _all_subs = (
                             (self.CHAT_MESSAGE_SUBSCRIPTION, self._subscribe_chat),
                             (self.CHAT_NOTIFICATION_SUBSCRIPTION, self._subscribe_chat_notification),
+                            (self.CHAT_MESSAGE_DELETE_SUBSCRIPTION, self._subscribe_chat_message_delete),
                             (self.HYPE_TRAIN_BEGIN, self._subscribe_hype_train_begin),
                             (self.HYPE_TRAIN_PROGRESS, self._subscribe_hype_train_progress),
                             (self.HYPE_TRAIN_END, self._subscribe_hype_train_end),
@@ -747,6 +771,9 @@ class TwitchConnector(BaseConnector):
                                                     auth_ready=True,
                                                     last_event_at=unified.sent_at,
                                                 )
+                                    elif subscription_type == self.CHAT_MESSAGE_DELETE_SUBSCRIPTION:
+                                        subscribed[self.CHAT_MESSAGE_DELETE_SUBSCRIPTION] = True
+                                        await self._handle_message_delete(metadata, payload)
                                     elif subscription_type in self.HYPE_TRAIN_TYPES:
                                         subscribed[subscription_type] = True
                                         ht_data = self._map_hype_train_event(subscription_type, metadata, payload)
@@ -772,6 +799,10 @@ class TwitchConnector(BaseConnector):
                                         subscribed[self.CHAT_NOTIFICATION_SUBSCRIPTION] = False
                                         next_subscribe_attempt_at[self.CHAT_NOTIFICATION_SUBSCRIPTION] = 0.0
                                         self.log.warning("Twitch chat notification subscription revoked; resubscribing")
+                                    elif subscription_type == self.CHAT_MESSAGE_DELETE_SUBSCRIPTION:
+                                        subscribed[self.CHAT_MESSAGE_DELETE_SUBSCRIPTION] = False
+                                        next_subscribe_attempt_at[self.CHAT_MESSAGE_DELETE_SUBSCRIPTION] = 0.0
+                                        self.log.warning("Twitch chat message delete subscription revoked; resubscribing")
                                     elif subscription_type in self.HYPE_TRAIN_TYPES:
                                         subscribed[subscription_type] = False
                                         next_subscribe_attempt_at[subscription_type] = 0.0
