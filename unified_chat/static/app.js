@@ -69,20 +69,118 @@ function platformMarkup(platform) {
 }
 
 
+const AUTHOR_COLOR_BG = "#09111f";
+const MIN_AUTHOR_CONTRAST = 4.0;
+
+function parseHexColor(value) {
+  if (!value) return null;
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(value).trim());
+  if (!match) return null;
+  const hex = `#${match[1].toLowerCase()}`;
+  const n = parseInt(match[1], 16);
+  return {
+    r: (n >> 16) & 0xff,
+    g: (n >> 8) & 0xff,
+    b: n & 0xff,
+    hex,
+  };
+}
+
+const AUTHOR_COLOR_BG_RGB = parseHexColor(AUTHOR_COLOR_BG);
+
+function srgbChannelToLinear(channel) {
+  const value = channel / 255;
+  return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function relativeLuminance(rgb) {
+  return (
+    0.2126 * srgbChannelToLinear(rgb.r) +
+    0.7152 * srgbChannelToLinear(rgb.g) +
+    0.0722 * srgbChannelToLinear(rgb.b)
+  );
+}
+
+function contrastRatio(fg, bg) {
+  const fgLum = relativeLuminance(fg);
+  const bgLum = relativeLuminance(bg);
+  const lighter = Math.max(fgLum, bgLum);
+  const darker = Math.min(fgLum, bgLum);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function mixTowardWhite(rgb, amount) {
+  return {
+    r: Math.round(rgb.r + (255 - rgb.r) * amount),
+    g: Math.round(rgb.g + (255 - rgb.g) * amount),
+    b: Math.round(rgb.b + (255 - rgb.b) * amount),
+  };
+}
+
+function rgbToHex(rgb) {
+  return `#${((rgb.r << 16) | (rgb.g << 8) | rgb.b).toString(16).padStart(6, "0")}`;
+}
+
+function ensureReadableColor(value) {
+  const color = parseHexColor(value);
+  if (!color || !AUTHOR_COLOR_BG_RGB) return "";
+  if (contrastRatio(color, AUTHOR_COLOR_BG_RGB) >= MIN_AUTHOR_CONTRAST) return color.hex;
+
+  let low = 0;
+  let high = 1;
+  for (let i = 0; i < 8; i += 1) {
+    const mid = (low + high) / 2;
+    const candidate = mixTowardWhite(color, mid);
+    if (contrastRatio(candidate, AUTHOR_COLOR_BG_RGB) >= MIN_AUTHOR_CONTRAST) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+  return rgbToHex(mixTowardWhite(color, high));
+}
+
+const URL_REGEX = /\bhttps?:\/\/[^\s<>"']+/g;
+const TRAILING_PUNCT = /[.,;:!?)\]}]+$/;
+
+function linkifyText(text) {
+  if (!text) return "";
+  let result = "";
+  let last = 0;
+  URL_REGEX.lastIndex = 0;
+  let match;
+  while ((match = URL_REGEX.exec(text)) !== null) {
+    let url = match[0];
+    let trailing = "";
+    const trail = url.match(TRAILING_PUNCT);
+    if (trail) {
+      trailing = trail[0];
+      url = url.slice(0, -trailing.length);
+    }
+    result += escapeHtml(text.slice(last, match.index));
+    const escaped = escapeHtml(url);
+    result += `<a href="${escaped}" target="_blank" rel="noopener noreferrer" class="message-link">${escaped}</a>`;
+    result += escapeHtml(trailing);
+    last = match.index + match[0].length;
+  }
+  result += escapeHtml(text.slice(last));
+  return result;
+}
+
 function renderMessageText(text, emotes) {
-  if (!emotes || !emotes.length) return escapeHtml(text);
+  if (!emotes || !emotes.length) return linkifyText(text);
   const sorted = [...emotes].sort((a, b) => a.begin - b.begin);
   let result = "";
   let cursor = 0;
   for (const emote of sorted) {
     if (emote.begin > cursor) {
-      result += escapeHtml(text.slice(cursor, emote.begin));
+      result += linkifyText(text.slice(cursor, emote.begin));
     }
     result += `<img class="emote" src="https://static-cdn.jtvnw.net/emoticons/v2/${emote.id}/default/dark/1.0" alt="${escapeHtml(emote.text)}" title="${escapeHtml(emote.text)}">`;
     cursor = emote.end;
   }
   if (cursor < text.length) {
-    result += escapeHtml(text.slice(cursor));
+    result += linkifyText(text.slice(cursor));
   }
   return result;
 }
@@ -116,7 +214,9 @@ function renderMessages() {
   const wasNearBottom = isNearBottom();
 
   feedEl.innerHTML = visibleMessages.map((message) => {
-    const authorStyle = message.author_color ? `style="color:${message.author_color}"` : "";
+    const messageClass = message.deleted_at ? "message-card deleted" : "message-card";
+    const readableColor = ensureReadableColor(message.author_color);
+    const authorStyle = readableColor ? `style="color:${readableColor}"` : "";
     const sourceBroadcaster = message.raw_payload?.payload?.event?.source_broadcaster || null;
     const isSystemNotice = message.platform === "twitch" && message.message_kind === "system";
     const sourceAvatar = message.platform === "twitch" && message.avatar_url
@@ -125,14 +225,14 @@ function renderMessages() {
 
     if (isSystemNotice) {
       return `
-        <article class="message-card system-notice" data-platform="${message.platform}">
+        <article class="${messageClass} system-notice" data-platform="${message.platform}">
           <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes)}</span></span>
         </article>
       `;
     }
 
     return `
-      <article class="message-card" data-platform="${message.platform}">
+      <article class="${messageClass}" data-platform="${message.platform}">
         <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
       </article>
     `;
@@ -210,6 +310,16 @@ function applyBootstrap(payload) {
   handleHypeTrain(payload.hype_train ?? null);
 }
 
+function markMessageDeleted(payload) {
+  const message = state.messages.find((candidate) =>
+    candidate.platform === payload.platform &&
+    candidate.platform_message_id === payload.platform_message_id
+  );
+  if (!message) return;
+  message.deleted_at = payload.deleted_at;
+  renderMessages();
+}
+
 function handleSocketPayload(payload) {
   if (!payload || typeof payload !== "object") return;
   if (payload.type === "bootstrap") {
@@ -224,6 +334,10 @@ function handleSocketPayload(payload) {
   if (payload.type === "status" && payload.status) {
     state.statuses.set(payload.status.platform, payload.status);
     renderStatuses();
+    return;
+  }
+  if (payload.type === "message_deleted") {
+    markMessageDeleted(payload);
     return;
   }
   if (payload.type === "hype_train") {
@@ -296,9 +410,9 @@ function renderHypeTrain(data) {
   const goal = data.goal > 0 ? data.goal : 1;
   const pct = Math.min(Math.round((progress / goal) * 100), 100);
   if (data.phase === "end") {
-    if (progressEl) progressEl.textContent = `Ended (${progress} / ${goal})`;
+    if (progressEl) progressEl.textContent = `Ended (${pct}%)`;
   } else {
-    if (progressEl) progressEl.textContent = `${progress} / ${goal}`;
+    if (progressEl) progressEl.textContent = `${pct}%`;
   }
   if (fillEl) fillEl.style.width = `${pct}%`;
 }
