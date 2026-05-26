@@ -606,6 +606,55 @@ h2 {
     border-color: rgba(145, 70, 255, 0.12);
 }
 
+.message-card.deleted {
+    opacity: 0.72;
+}
+
+.message-card.deleted .message-text {
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+}
+
+.message-card.deleted .emote {
+    filter: grayscale(1);
+    opacity: 0.5;
+}
+
+@property --twitch-rainbow-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+
+.message-card.system-notice[data-platform="twitch"] {
+    border: 2px solid transparent;
+    background:
+        linear-gradient(rgba(145, 70, 255, 0.08), rgba(145, 70, 255, 0.08)) padding-box,
+        linear-gradient(#0d1626, #0d1626) padding-box,
+        conic-gradient(
+            from var(--twitch-rainbow-angle),
+            rgba(255, 59, 59, 0.9), rgba(255, 177, 59, 0.9), rgba(245, 238, 58, 0.9), rgba(76, 217, 100, 0.9),
+            rgba(52, 192, 255, 0.9), rgba(106, 92, 255, 0.9), rgba(255, 92, 209, 0.9), rgba(255, 59, 59, 0.9)
+        ) border-box;
+    animation: twitch-rainbow-spin 6s linear infinite;
+}
+
+@keyframes twitch-rainbow-spin {
+    to { --twitch-rainbow-angle: 360deg; }
+}
+
+.message-link {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: currentColor;
+    text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+}
+
+.message-link:hover {
+    text-decoration-thickness: 2px;
+}
+
 .message-topline {
     display: inline;
     line-height: 1;
