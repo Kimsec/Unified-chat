@@ -34,6 +34,7 @@ class UnifiedMessage(BaseModel):
     emotes: list[Emote] = Field(default_factory=list)
     text: str
     sent_at: datetime
+    deleted_at: datetime | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
