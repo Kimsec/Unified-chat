@@ -301,6 +301,15 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.outcome, "ok")
         self.assertEqual(session.calls[0]["json"]["type"], self.connector.CHAT_NOTIFICATION_SUBSCRIPTION)
 
+    async def test_subscribe_chat_message_delete_uses_delete_type(self):
+        session = FakePostSession([FakeResponse(202, '{"ok":true}')])
+
+        with mock.patch.object(self.connector, "_load_access_token", return_value="token"):
+            result = await self.connector._subscribe_chat_message_delete(session, "session-1")
+
+        self.assertEqual(result.outcome, "ok")
+        self.assertEqual(session.calls[0]["json"]["type"], self.connector.CHAT_MESSAGE_DELETE_SUBSCRIPTION)
+
     async def test_hype_train_subscriptions_use_v2_and_broadcaster_only_condition(self):
         session = FakePostSession(
             [
@@ -793,6 +802,107 @@ class TwitchConnectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.state, "connected")
         self.assertTrue(status.connected)
         self.assertGreaterEqual(notification_subscribe_calls, 2)
+
+    async def test_message_delete_notification_marks_existing_message_deleted(self):
+        delete_event = {
+            "broadcaster_user_id": "111",
+            "target_user_id": "222",
+            "target_user_name": "Kim",
+            "target_user_login": "kim",
+            "message_id": "msg-1",
+        }
+        websocket = FakeWebSocket(
+            [
+                welcome_packet("session-1"),
+                notification_packet(
+                    self.connector.CHAT_MESSAGE_DELETE_SUBSCRIPTION,
+                    delete_event,
+                    timestamp="2026-04-06T10:01:00Z",
+                ),
+            ],
+            connector=self.connector,
+        )
+        session = FakeClientSession(websocket)
+
+        async def fake_mark_deleted(*_args):
+            self.connector._stop_event.set()
+            return True
+
+        self.service.mark_message_deleted = mock.AsyncMock(side_effect=fake_mark_deleted)
+
+        with mock.patch.object(self.connector, "_subscribe_chat", return_value=SubscribeResult("ok")), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            return_value=SubscribeResult("ok"),
+        ), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_message_delete",
+            return_value=SubscribeResult("ok"),
+        ), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=session,
+        ):
+            await self.connector.run()
+
+        self.service.mark_message_deleted.assert_awaited_once()
+        args = self.service.mark_message_deleted.await_args.args
+        self.assertEqual(args[0], "twitch")
+        self.assertEqual(args[1], "msg-1")
+        self.assertEqual(args[2].isoformat(), "2026-04-06T10:01:00+00:00")
+
+    async def test_message_delete_revocation_keeps_primary_chat_connected(self):
+        chat_event = {
+            "message_id": "msg-1",
+            "broadcaster_user_id": "111",
+            "chatter_user_name": "Kim",
+            "chatter_user_login": "kim",
+            "message": {
+                "text": "hello",
+                "fragments": [{"type": "text", "text": "hello"}],
+            },
+            "badges": [],
+        }
+        websocket = FakeWebSocket(
+            [
+                welcome_packet("session-1"),
+                notification_packet(self.connector.CHAT_MESSAGE_SUBSCRIPTION, chat_event),
+                revocation_packet(self.connector.CHAT_MESSAGE_DELETE_SUBSCRIPTION),
+            ],
+            connector=self.connector,
+        )
+        session = FakeClientSession(websocket)
+        delete_subscribe_calls = 0
+
+        async def fake_subscribe(_session, _session_id):
+            return SubscribeResult("ok")
+
+        async def fake_subscribe_delete(_session, _session_id):
+            nonlocal delete_subscribe_calls
+            delete_subscribe_calls += 1
+            if delete_subscribe_calls >= 2:
+                self.connector._stop_event.set()
+            return SubscribeResult("ok")
+
+        with mock.patch.object(self.connector, "_subscribe_chat", side_effect=fake_subscribe), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_notification",
+            side_effect=fake_subscribe,
+        ), mock.patch.object(
+            self.connector,
+            "_subscribe_chat_message_delete",
+            side_effect=fake_subscribe_delete,
+        ), mock.patch.object(
+            twitch_module.aiohttp,
+            "ClientSession",
+            return_value=session,
+        ):
+            await self.connector.run()
+
+        status = self.twitch_status()
+        self.assertEqual(status.state, "connected")
+        self.assertTrue(status.connected)
+        self.assertGreaterEqual(delete_subscribe_calls, 2)
 
 
 if __name__ == "__main__":
