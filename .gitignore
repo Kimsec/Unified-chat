@@ -32,3 +32,4 @@ logs/*
 .DS_Store
 Thumbs.db
 unified-chat.service
+tests/
