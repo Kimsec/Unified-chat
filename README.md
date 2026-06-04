@@ -51,7 +51,7 @@ Then set `APP_BASE_URL` in `.env` to your public HTTPS URL. This URL is used to 
 ## Quick Start
 
 ```bash
-cd /home/kim3k/unified-chat
+cd ~/unified-chat
 python3 -m venv venv
 . venv/bin/activate
 pip install -r requirements.txt
@@ -67,7 +67,7 @@ venv/bin/uvicorn unified_chat.main:app --host 0.0.0.0 --port 8090
 
 Then open your public URL or `http://YOUR_LAN_IP:8090`.
 
-If you want password protection on the UI, set `LOGIN_PASSWORD_HASH` and `SESSION_SECRET_KEY` in `.env`. With auth enabled, `unified-chat` will require login on public hosts such as `unified-chat.kimsec.net`, but it will still allow direct local/private access on `localhost`, `127.0.0.1`, and LAN IPs like `192.168.x.x` without a password. Keep `SESSION_COOKIE_SECURE=true` for the public HTTPS domain.
+If you want password protection on the UI, set `LOGIN_PASSWORD_HASH` and `SESSION_SECRET_KEY` in `.env`. With auth enabled, `unified-chat` will require login on public hosts such as `unified-chat.domain.com`, but it will still allow direct local/private access on `localhost`, `127.0.0.1`, and LAN IPs like `192.168.x.x` without a password. Keep `SESSION_COOKIE_SECURE=true` for the public HTTPS domain.
 
 ---
 
@@ -173,7 +173,7 @@ You do **not** need Google verification for apps with fewer than 100 users. The 
 
 1. Start Unified Chat temporarily:
    ```bash
-   cd /home/kim3k/unified-chat
+   cd ~/unified-chat
    venv/bin/uvicorn unified_chat.main:app --host 0.0.0.0 --port 8090
    ```
 2. Visit `https://your-public-domain/auth/youtube/start` in your browser
@@ -231,43 +231,9 @@ With `KICK_BROADCASTER_USER_ID` set, the app uses **client credentials mode** --
 
 ---
 
-## Environment Variables Reference
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `HOST` | No | `0.0.0.0` | Server bind address |
-| `PORT` | No | `8090` | Server port |
-| `APP_BASE_URL` | No | `http://your-public-domain.com` | Public base URL |
-| `LOG_LEVEL` | No | `info` | Logging level |
-| `LOGIN_PASSWORD_HASH` | No | -- | Werkzeug password hash for UI login; blank disables auth |
-| `SESSION_SECRET_KEY` | Conditionally | -- | Required when `LOGIN_PASSWORD_HASH` is set |
-| `SESSION_COOKIE_SECURE` | No | auto | Force secure session cookie; defaults to true on HTTPS base URLs |
-| `POPUP_ALLOWED_FRAME_ANCESTORS` | No | `https://stream.kimsec.net` | Space/comma-separated HTTPS origins allowed to embed `/popout` |
-| `DATABASE_PATH` | No | `data/unified_chat.db` | SQLite database path |
-| **Twitch** | | | |
-| `TWITCH_CLIENT_ID` | Yes | -- | Twitch app Client ID |
-| `TWITCH_BROADCASTER_ID` | Yes | -- | Numeric Twitch user ID |
-| `TWITCH_TOKENS_PATH` | No | `twitch_tokens.json` | Path to token file from stream-control |
-| `TWITCH_EVENTSUB_WS_URL` | No | `wss://eventsub.wss.twitch.tv/ws` | EventSub WebSocket URL |
-| **YouTube** | | | |
-| `YOUTUBE_CLIENT_SECRETS_FILE` | Yes | -- | Path to Google OAuth client secrets JSON |
-| `YOUTUBE_TOKEN_PATH` | No | `data/youtube_tokens.json` | Where to store YouTube tokens |
-| `YOUTUBE_REDIRECT_URI` | No | `{APP_BASE_URL}/auth/youtube/callback` | OAuth callback URL |
-| `YOUTUBE_SCOPES` | No | `youtube.readonly` | OAuth scopes |
-| `YOUTUBE_POLL_FALLBACK_SEC` | No | `8` | Minimum YouTube live chat polling interval in chat mode; discovery mode checks every 30 seconds |
-| **Kick** | | | |
-| `KICK_CLIENT_ID` | Yes | -- | Kick app Client ID |
-| `KICK_CLIENT_SECRET` | Yes | -- | Kick app Client Secret |
-| `KICK_BROADCASTER_USER_ID` | Recommended | -- | Enables app-token mode (no user auth needed) |
-| `KICK_TOKEN_PATH` | No | `data/kick_tokens.json` | Where to store Kick tokens |
-| `KICK_REDIRECT_URI` | No | `{APP_BASE_URL}/auth/kick/callback` | OAuth callback URL |
-| `KICK_SCOPE` | No | `events:subscribe` | OAuth scope |
-
----
-
 ## Running as a systemd Service
 
-A ready-to-install unit file is provided in `unified-chat.service` for the current default layout (`/home/kim3k/unified-chat` on port `8090`).
+A ready-to-install unit file is provided in `unified-chat.service` for the current default layout (`/home/<user>/unified-chat` on port `8090`).
 
 ```bash
 sudo cp unified-chat.service /etc/systemd/system/unified-chat.service
@@ -278,12 +244,6 @@ sudo systemctl start unified-chat
 If your username or paths differ, edit `unified-chat.service` first or use `unified-chat.service.example` as a generic template.
 
 `stream-control` can manage `unified-chat.service` automatically, so you do not need to enable it at boot unless you explicitly want it always running.
-
-## Running Tests
-
-```bash
-venv/bin/python -m unittest discover -s tests
-```
 
 ## Important Limitations
 
