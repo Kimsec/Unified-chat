@@ -39,14 +39,9 @@
 
 ## Prerequisites
 
-Both YouTube and Kick require a **public HTTPS URL** for OAuth callbacks and webhooks. Set up a Cloudflare Tunnel (or similar) pointing to your local server:
+Both YouTube and Kick require a **public HTTPS URL** for OAuth callbacks and webhooks — expose your local server (port `8090`) behind a public HTTPS endpoint (e.g. a reverse proxy or Cloudflare Tunnel).
 
-```bash
-# Example: expose local port 8090 as https://unified-chat.yourdomain.com
-cloudflared tunnel route dns <tunnel-name> unified-chat.yourdomain.com
-```
-
-Then set `APP_BASE_URL` in `.env` to your public HTTPS URL. This URL is used to derive the default redirect URIs for YouTube and Kick.
+Then set `APP_BASE_URL` in `.env` to that public HTTPS URL. This URL is used to derive the default redirect URIs for YouTube and Kick.
 
 ## Quick Start
 
