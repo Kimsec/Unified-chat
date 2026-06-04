@@ -96,13 +96,13 @@ def load_settings() -> Settings:
         session_secret_key=session_secret_key or "dev-unified-chat-session-key",
         session_cookie_secure=session_cookie_secure,
         popup_allowed_frame_ancestors=_split_origins(
-            os.getenv("POPUP_ALLOWED_FRAME_ANCESTORS", "https://stream.kimsec.net")
+            os.getenv("POPUP_ALLOWED_FRAME_ANCESTORS", "")
         ),
         database_path=Path(os.getenv("DATABASE_PATH", str(PROJECT_DIR / "data" / "unified_chat.db"))).expanduser(),
         twitch_client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
         twitch_broadcaster_id=os.getenv("TWITCH_BROADCASTER_ID", "").strip(),
         twitch_tokens_path=Path(
-            os.getenv("TWITCH_TOKENS_PATH", "/home/kim3k/stream-control/twitch_tokens.json")
+            os.getenv("TWITCH_TOKENS_PATH", "../stream-control/twitch_tokens.json")
         ).expanduser(),
         twitch_eventsub_ws_url=os.getenv("TWITCH_EVENTSUB_WS_URL", "wss://eventsub.wss.twitch.tv/ws").strip(),
         youtube_client_secrets_file=_optional_path(os.getenv("YOUTUBE_CLIENT_SECRETS_FILE")),
