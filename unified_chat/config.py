@@ -46,6 +46,7 @@ class Settings:
     session_secret_key: str
     session_cookie_secure: bool
     popup_allowed_frame_ancestors: list[str]
+    popout_token: str
     database_path: Path
     twitch_client_id: str
     twitch_broadcaster_id: str
@@ -98,6 +99,7 @@ def load_settings() -> Settings:
         popup_allowed_frame_ancestors=_split_origins(
             os.getenv("POPUP_ALLOWED_FRAME_ANCESTORS", "")
         ),
+        popout_token=os.getenv("POPOUT_TOKEN", "").strip(),
         database_path=Path(os.getenv("DATABASE_PATH", str(PROJECT_DIR / "data" / "unified_chat.db"))).expanduser(),
         twitch_client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
         twitch_broadcaster_id=os.getenv("TWITCH_BROADCASTER_ID", "").strip(),

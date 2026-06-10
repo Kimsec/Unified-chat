@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
@@ -231,6 +232,9 @@ async def index(request: Request):
 
 @app.get("/popout", response_class=HTMLResponse)
 async def popout(request: Request):
+    token = request.query_params.get("token")
+    if token and settings.popout_token and secrets.compare_digest(token, settings.popout_token):
+        request.session["authenticated"] = True
     auth_response = require_browser_auth(request)
     if auth_response is not None:
         return auth_response
