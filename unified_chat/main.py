@@ -16,7 +16,7 @@ from werkzeug.security import check_password_hash
 
 from unified_chat.config import Settings, load_settings
 from unified_chat.connectors import KickConnector, TwitchConnector, YouTubeConnector
-from unified_chat.models import ReplyRequest
+from unified_chat.models import ModerationRequest, ReplyRequest
 from unified_chat.service import ChatService
 from unified_chat.store import MessageStore
 
@@ -289,6 +289,38 @@ async def reply_twitch(payload: ReplyRequest, request: Request):
     runtime = get_runtime(request)
     try:
         result = await runtime.twitch.send_reply(payload.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "platform": "twitch", "result": result}
+
+
+@app.post("/api/mod/twitch/ban")
+async def mod_twitch_ban(payload: ModerationRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    try:
+        result = await runtime.twitch.ban_user(payload.user_id, reason=payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "platform": "twitch", "result": result}
+
+
+@app.post("/api/mod/twitch/timeout")
+async def mod_twitch_timeout(payload: ModerationRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    if payload.duration is None:
+        raise HTTPException(status_code=400, detail="duration is required for timeouts")
+    try:
+        result = await runtime.twitch.ban_user(
+            payload.user_id,
+            duration=payload.duration,
+            reason=payload.reason,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

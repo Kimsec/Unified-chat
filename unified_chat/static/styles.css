@@ -736,6 +736,86 @@ h2 {
     font-size: 0.82rem;
 }
 
+.mod-panel {
+    position: fixed;
+    z-index: 60;
+    min-width: 180px;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+}
+
+.mod-panel.hidden {
+    display: none;
+}
+
+.mod-panel-user {
+    font-weight: 700;
+    font-size: 0.93rem;
+    margin-bottom: 8px;
+}
+
+.mod-panel-actions,
+.mod-panel-durations {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.mod-panel-durations {
+    margin-top: 6px;
+}
+
+.mod-panel-durations.hidden {
+    display: none;
+}
+
+.mod-panel-button {
+    cursor: pointer;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 0.88rem;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    transition: transform 160ms ease, opacity 160ms ease, background 160ms ease;
+}
+
+.mod-panel-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.mod-panel-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.mod-panel-button.mod-ban {
+    background: rgba(255, 59, 48, 0.18);
+}
+
+.mod-panel-button.confirming {
+    background: rgba(255, 123, 123, 0.3);
+}
+
+.mod-panel-status {
+    margin-top: 8px;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.mod-panel-status:empty {
+    display: none;
+}
+
+.mod-panel-status.error {
+    color: var(--danger);
+}
+
 .empty-state {
     padding: 20px;
     border-radius: 18px;

@@ -33,6 +33,7 @@ class TwitchConnector(BaseConnector):
     HYPE_TRAIN_TYPES = frozenset({HYPE_TRAIN_BEGIN, HYPE_TRAIN_PROGRESS, HYPE_TRAIN_END})
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
+    BAN_URL = "https://api.twitch.tv/helix/moderation/bans"
     USERS_URL = "https://api.twitch.tv/helix/users"
     HYPE_TRAIN_STATUS_URL = "https://api.twitch.tv/helix/hypetrain/status"
 
@@ -412,6 +413,7 @@ class TwitchConnector(BaseConnector):
             channel_id=str(event.get("broadcaster_user_id") or self.settings.twitch_broadcaster_id),
             author_display_name=str(event.get("chatter_user_name") or event.get("chatter_user_login") or "Unknown"),
             author_login=event.get("chatter_user_login"),
+            author_id=str(event.get("chatter_user_id") or "") or None,
             author_color=event.get("color"),
             avatar_url=source_avatar_url,
             badges=badges,
@@ -444,6 +446,7 @@ class TwitchConnector(BaseConnector):
             channel_id=str(event.get("broadcaster_user_id") or self.settings.twitch_broadcaster_id),
             author_display_name=str(event.get("chatter_user_name") or event.get("chatter_user_login") or "Twitch"),
             author_login=event.get("chatter_user_login"),
+            author_id=str(event.get("chatter_user_id") or "") or None,
             author_color=event.get("color"),
             avatar_url=source_avatar_url,
             badges=[],
@@ -550,6 +553,61 @@ class TwitchConnector(BaseConnector):
                         continue
                     raise RuntimeError(f"Twitch send failed {response.status}: {data}")
         raise RuntimeError("Unable to send Twitch message")
+
+    async def ban_user(
+        self,
+        user_id: str,
+        *,
+        duration: int | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        target = str(user_id or "").strip()
+        if not target:
+            raise ValueError("user_id is required")
+        if target == self.settings.twitch_broadcaster_id:
+            raise ValueError("Cannot ban the broadcaster")
+        if duration is not None and not 1 <= duration <= 1209600:
+            raise ValueError("duration must be between 1 and 1209600 seconds")
+
+        data: dict[str, Any] = {"user_id": target}
+        if duration is not None:
+            data["duration"] = duration
+        if reason:
+            data["reason"] = str(reason)[:500]
+        params = {
+            "broadcaster_id": self.settings.twitch_broadcaster_id,
+            "moderator_id": self.settings.twitch_broadcaster_id,
+        }
+        token = self._load_access_token()
+        if not token:
+            raise RuntimeError("No Twitch access token found")
+
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            for attempt in range(2):
+                headers = {
+                    "Client-Id": self.settings.twitch_client_id,
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+                async with session.post(
+                    self.BAN_URL,
+                    headers=headers,
+                    params=params,
+                    json={"data": data},
+                ) as response:
+                    try:
+                        payload = await response.json(content_type=None)
+                    except Exception:
+                        payload = {"raw": await response.text()}
+                    if response.status in (200, 202):
+                        return payload
+                    if response.status == 409:
+                        return {"already_banned": True}
+                    if response.status == 401 and attempt == 0:
+                        token = self._load_access_token()
+                        continue
+                    raise RuntimeError(f"Twitch ban failed {response.status}: {payload}")
+        raise RuntimeError("Unable to ban Twitch user")
 
     async def run(self) -> None:
         if not self._configured():

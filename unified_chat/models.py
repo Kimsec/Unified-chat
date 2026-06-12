@@ -28,6 +28,7 @@ class UnifiedMessage(BaseModel):
     channel_id: str | None = None
     author_display_name: str
     author_login: str | None = None
+    author_id: str | None = None
     author_color: str | None = None
     avatar_url: str | None = None
     badges: list[Badge] = Field(default_factory=list)
@@ -51,3 +52,9 @@ class ConnectorStatus(BaseModel):
 
 class ReplyRequest(BaseModel):
     message: str
+
+
+class ModerationRequest(BaseModel):
+    user_id: str
+    duration: int | None = None
+    reason: str | None = None

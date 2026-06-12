@@ -231,19 +231,30 @@ function renderMessages() {
       `;
     }
 
+    const canModerate = message.platform === "twitch"
+      && message.author_id
+      && message.author_id !== message.channel_id;
+    const modAttrs = canModerate
+      ? ` data-mod-user-id="${escapeHtml(message.author_id)}" data-mod-user-name="${escapeHtml(message.author_display_name)}"`
+      : "";
+
     return `
       <article class="${messageClass}" data-platform="${message.platform}">
-        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
+        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
       </article>
     `;
   }).join("");
 
   requestAnimationFrame(() => {
     if (wasNearBottom) {
+      modScrollCloseSuppressedUntil = performance.now() + 200;
       feedEl.scrollTop = feedEl.scrollHeight;
     }
   });
 }
+
+// Auto-scroll from renderMessages() must not close the mod panel; only user scrolls do.
+let modScrollCloseSuppressedUntil = 0;
 
 function isNearBottom() {
   return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 100;
@@ -609,6 +620,189 @@ replyFormEl.addEventListener("submit", async (event) => {
     if (submitBtn) submitBtn.disabled = false;
   }
 });
+
+// Twitch mod actions panel (broadcaster-only feature; no visual affordance on names)
+const MOD_CONFIRM_MS = 4000;
+const MOD_TIMEOUT_OPTIONS = [
+  { label: "5 min", duration: 300 },
+  { label: "10 min", duration: 600 },
+  { label: "30 min", duration: 1800 },
+];
+const modPanelState = {
+  el: null,
+  userId: null,
+  anchorRect: null,
+  confirmTimer: null,
+  busy: false,
+};
+
+function ensureModPanel() {
+  if (modPanelState.el) return modPanelState.el;
+  const panel = document.createElement("div");
+  panel.className = "mod-panel hidden";
+  panel.addEventListener("click", handleModPanelClick);
+  document.body.appendChild(panel);
+  modPanelState.el = panel;
+  return panel;
+}
+
+function isModPanelOpen() {
+  return Boolean(modPanelState.el) && !modPanelState.el.classList.contains("hidden");
+}
+
+function openModPanel(nameEl) {
+  const panel = ensureModPanel();
+  resetModConfirm();
+  modPanelState.userId = nameEl.dataset.modUserId;
+  modPanelState.anchorRect = nameEl.getBoundingClientRect();
+  modPanelState.busy = false;
+  const durationButtons = MOD_TIMEOUT_OPTIONS.map((option) =>
+    `<button type="button" class="mod-panel-button" data-action="timeout" data-duration="${option.duration}" data-label="${option.label}">${option.label}</button>`
+  ).join("");
+  panel.innerHTML = `
+    <div class="mod-panel-user">${escapeHtml(nameEl.dataset.modUserName || "")}</div>
+    <div class="mod-panel-actions">
+      <button type="button" class="mod-panel-button mod-ban" data-action="ban" data-label="Ban">Ban</button>
+      <button type="button" class="mod-panel-button" data-action="timeout-toggle" data-label="Timeout">Timeout</button>
+    </div>
+    <div class="mod-panel-durations hidden">${durationButtons}</div>
+    <div class="mod-panel-status"></div>
+  `;
+  panel.classList.remove("hidden");
+  positionModPanel();
+}
+
+function positionModPanel() {
+  const panel = modPanelState.el;
+  const rect = modPanelState.anchorRect;
+  if (!panel || !rect) return;
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  let left = Math.min(Math.max(rect.left, 8), window.innerWidth - width - 8);
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8) {
+    top = rect.top - height - 6;
+  }
+  top = Math.max(top, 8);
+  panel.style.left = `${Math.max(left, 8)}px`;
+  panel.style.top = `${top}px`;
+}
+
+function closeModPanel() {
+  if (!isModPanelOpen()) return;
+  resetModConfirm();
+  modPanelState.el.classList.add("hidden");
+  modPanelState.userId = null;
+  modPanelState.anchorRect = null;
+  modPanelState.busy = false;
+}
+
+function resetModConfirm() {
+  if (modPanelState.confirmTimer) {
+    clearTimeout(modPanelState.confirmTimer);
+    modPanelState.confirmTimer = null;
+  }
+  if (!modPanelState.el) return;
+  modPanelState.el.querySelectorAll(".mod-panel-button.confirming").forEach((button) => {
+    button.classList.remove("confirming");
+    button.textContent = button.dataset.label;
+  });
+}
+
+function handleModPanelClick(event) {
+  const button = event.target.closest("button");
+  if (!button || modPanelState.busy) return;
+
+  if (button.dataset.action === "timeout-toggle") {
+    resetModConfirm();
+    modPanelState.el.querySelector(".mod-panel-durations").classList.toggle("hidden");
+    positionModPanel();
+    return;
+  }
+
+  if (!button.classList.contains("confirming")) {
+    resetModConfirm();
+    button.classList.add("confirming");
+    button.textContent = "Confirm?";
+    modPanelState.confirmTimer = window.setTimeout(resetModConfirm, MOD_CONFIRM_MS);
+    return;
+  }
+
+  resetModConfirm();
+  const duration = button.dataset.duration ? Number(button.dataset.duration) : null;
+  sendModAction(duration);
+}
+
+async function sendModAction(duration) {
+  const panel = modPanelState.el;
+  const statusEl = panel.querySelector(".mod-panel-status");
+  modPanelState.busy = true;
+  panel.querySelectorAll("button").forEach((button) => {
+    button.disabled = true;
+  });
+  statusEl.classList.remove("error");
+  statusEl.textContent = "Sending...";
+
+  const endpoint = duration ? "/api/mod/twitch/timeout" : "/api/mod/twitch/ban";
+  const body = { user_id: modPanelState.userId };
+  if (duration) body.duration = duration;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Moderation request failed");
+    }
+    if (payload.result?.already_banned) {
+      statusEl.textContent = "Already banned";
+    } else {
+      statusEl.textContent = duration ? `Timed out ${Math.round(duration / 60)} min` : "Banned";
+    }
+    positionModPanel();
+  } catch (error) {
+    statusEl.classList.add("error");
+    statusEl.textContent = String(error.message || error);
+    modPanelState.busy = false;
+    panel.querySelectorAll("button").forEach((button) => {
+      button.disabled = false;
+    });
+    positionModPanel();
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const nameEl = target?.closest(".author-name[data-mod-user-id]");
+  if (nameEl) {
+    if (isModPanelOpen() && modPanelState.userId === nameEl.dataset.modUserId) {
+      closeModPanel();
+    } else {
+      openModPanel(nameEl);
+    }
+    return;
+  }
+  if (isModPanelOpen() && !modPanelState.el.contains(target)) {
+    closeModPanel();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeModPanel();
+});
+
+feedEl.addEventListener("scroll", () => {
+  if (performance.now() < modScrollCloseSuppressedUntil) return;
+  closeModPanel();
+});
+window.addEventListener("resize", closeModPanel);
 
 fetchBootstrap()
   .then(connectSocket)

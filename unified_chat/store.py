@@ -37,6 +37,7 @@ class MessageStore:
                     channel_id TEXT,
                     author_display_name TEXT NOT NULL,
                     author_login TEXT,
+                    author_id TEXT,
                     author_color TEXT,
                     avatar_url TEXT,
                     badges_json TEXT NOT NULL,
@@ -64,6 +65,8 @@ class MessageStore:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN emotes_json TEXT NOT NULL DEFAULT '[]'")
             if "deleted_at" not in columns:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN deleted_at TEXT")
+            if "author_id" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN author_id TEXT")
             self._conn.commit()
 
     def add_message(self, message: UnifiedMessage) -> bool:
@@ -76,6 +79,7 @@ class MessageStore:
             message.channel_id,
             message.author_display_name,
             message.author_login,
+            message.author_id,
             message.author_color,
             message.avatar_url,
             dumps_json([badge.model_dump() for badge in message.badges]),
@@ -92,9 +96,9 @@ class MessageStore:
                     """
                     INSERT INTO messages (
                         id, platform, platform_message_id, message_kind, notice_type, channel_id,
-                        author_display_name, author_login, author_color, avatar_url,
+                        author_display_name, author_login, author_id, author_color, avatar_url,
                         badges_json, emotes_json, text, sent_at, deleted_at, raw_payload_json, inserted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -166,6 +170,7 @@ class MessageStore:
             channel_id=row["channel_id"],
             author_display_name=row["author_display_name"],
             author_login=row["author_login"],
+            author_id=row["author_id"],
             author_color=row["author_color"],
             avatar_url=row["avatar_url"],
             badges=badges,
