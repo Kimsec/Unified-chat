@@ -31,6 +31,7 @@ class TwitchConnector(BaseConnector):
     HYPE_TRAIN_PROGRESS = "channel.hype_train.progress"
     HYPE_TRAIN_END = "channel.hype_train.end"
     HYPE_TRAIN_TYPES = frozenset({HYPE_TRAIN_BEGIN, HYPE_TRAIN_PROGRESS, HYPE_TRAIN_END})
+    CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION = "channel.channel_points_custom_reward_redemption.add"
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
     BAN_URL = "https://api.twitch.tv/helix/moderation/bans"
@@ -206,6 +207,18 @@ class TwitchConnector(BaseConnector):
 
     async def _subscribe_hype_train_end(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
         return await self._subscribe_eventsub(session, session_id, self.HYPE_TRAIN_END, version="2", condition=self._hype_train_condition())
+
+    async def _subscribe_channel_points_redemption(
+        self,
+        session: aiohttp.ClientSession,
+        session_id: str,
+    ) -> SubscribeResult:
+        return await self._subscribe_eventsub(
+            session,
+            session_id,
+            self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION,
+            condition={"broadcaster_user_id": self.settings.twitch_broadcaster_id},
+        )
 
     def _normalize_hype_train_payload(
         self,
@@ -456,6 +469,51 @@ class TwitchConnector(BaseConnector):
             raw_payload={"metadata": metadata, "payload": {**payload, "event": event}},
         )
 
+    def _map_redemption_message(
+        self,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> UnifiedMessage | None:
+        event = payload.get("event") or {}
+        redemption_id = str(event.get("id") or "")
+        if not redemption_id:
+            return None
+
+        reward = event.get("reward") or {}
+        reward_title = str(reward.get("title") or "a reward").strip() or "a reward"
+        reward_cost = reward.get("cost")
+        user_input = (event.get("user_input") or "").strip()
+        user_name = str(
+            event.get("user_name") or event.get("user_login") or "Someone"
+        ).strip() or "Someone"
+
+        text = f"{user_name} redeemed {reward_title}"
+        if isinstance(reward_cost, int) and reward_cost > 0:
+            text += f" ({reward_cost} points)"
+        if user_input:
+            text += f": {user_input}"
+
+        return UnifiedMessage(
+            id=make_message_key("twitch", redemption_id),
+            platform="twitch",
+            platform_message_id=redemption_id,
+            message_kind="system",
+            notice_type="channel_points_reward",
+            channel_id=str(event.get("broadcaster_user_id") or self.settings.twitch_broadcaster_id),
+            author_display_name=user_name,
+            author_login=event.get("user_login"),
+            author_id=str(event.get("user_id") or "") or None,
+            author_color=None,
+            avatar_url=None,
+            badges=[],
+            emotes=[],
+            text=text,
+            sent_at=parse_datetime(event.get("redeemed_at"))
+                or parse_datetime(metadata.get("message_timestamp"))
+                or utcnow(),
+            raw_payload={"metadata": metadata, "payload": payload},
+        )
+
     def _map_hype_train_event(
         self,
         subscription_type: str,
@@ -663,6 +721,7 @@ class TwitchConnector(BaseConnector):
                             (self.HYPE_TRAIN_BEGIN, self._subscribe_hype_train_begin),
                             (self.HYPE_TRAIN_PROGRESS, self._subscribe_hype_train_progress),
                             (self.HYPE_TRAIN_END, self._subscribe_hype_train_end),
+                            (self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION, self._subscribe_channel_points_redemption),
                         )
                         subscribed = {st: False for st, _ in _all_subs}
                         next_subscribe_attempt_at = {st: 0.0 for st, _ in _all_subs}
@@ -837,6 +896,11 @@ class TwitchConnector(BaseConnector):
                                         ht_data = self._map_hype_train_event(subscription_type, metadata, payload)
                                         if ht_data:
                                             await self.service.broadcast_hype_train(ht_data)
+                                    elif subscription_type == self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION:
+                                        subscribed[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = True
+                                        unified = self._map_redemption_message(metadata, payload)
+                                        if unified is not None:
+                                            await self.service.publish_message(unified)
                                     continue
 
                                 if message_type == "revocation":
@@ -865,6 +929,10 @@ class TwitchConnector(BaseConnector):
                                         subscribed[subscription_type] = False
                                         next_subscribe_attempt_at[subscription_type] = 0.0
                                         self.log.warning("Twitch %s subscription revoked; resubscribing", subscription_type)
+                                    elif subscription_type == self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION:
+                                        subscribed[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = False
+                                        next_subscribe_attempt_at[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = 0.0
+                                        self.log.warning("Twitch channel points redemption subscription revoked; resubscribing")
                                     continue
 
                             if packet.type in (
