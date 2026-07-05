@@ -16,6 +16,19 @@ class BaseConnector:
         self.log = logging.getLogger(f"unified_chat.{self.platform}")
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._last_transient_error: str | None = None
+
+    def log_transient(self, message: str) -> None:
+        if message != self._last_transient_error:
+            self._last_transient_error = message
+            self.log.warning("%s", message)
+        else:
+            self.log.debug("%s", message)
+
+    def clear_transient(self) -> None:
+        if self._last_transient_error is not None:
+            self.log.info("Recovered after: %s", self._last_transient_error)
+        self._last_transient_error = None
 
     async def start(self) -> None:
         if self._task is None:
