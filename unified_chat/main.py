@@ -78,6 +78,20 @@ logging.basicConfig(
 templates = Jinja2Templates(directory=str(settings.template_dir))
 
 
+def _static_asset_version() -> str:
+    latest = 0.0
+    for name in ("app.js", "styles.css"):
+        try:
+            latest = max(latest, (settings.static_dir / name).stat().st_mtime)
+        except OSError:
+            pass
+    return str(int(latest))
+
+
+ASSET_VERSION = _static_asset_version()
+templates.env.globals["asset_version"] = ASSET_VERSION
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     runtime = Runtime(settings)
@@ -226,6 +240,7 @@ async def index(request: Request):
         context={
             "app_base_url": settings.app_base_url,
             "auth_enabled": auth_enabled(),
+            "twitch_connect_enabled": settings.twitch_manages_token,
         },
     )
 
@@ -271,7 +286,7 @@ async def get_messages(request: Request, limit: int = Query(200, ge=1, le=500)):
 async def clear_messages(request: Request):
     require_json_auth(request)
     runtime = get_runtime(request)
-    runtime.service.clear_messages()
+    await runtime.service.clear_messages()
     return {"ok": True}
 
 
@@ -335,13 +350,15 @@ async def websocket_chat(websocket: WebSocket):
         return
     runtime = get_runtime(websocket)
     await runtime.service.hub.connect(websocket)
-    await websocket.send_json(await runtime.build_bootstrap())
     try:
+        await websocket.send_json(await runtime.build_bootstrap())
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        runtime.service.hub.disconnect(websocket)
+        pass
     except Exception:
+        pass
+    finally:
         runtime.service.hub.disconnect(websocket)
 
 
@@ -400,6 +417,32 @@ async def auth_kick_callback(request: Request):
     runtime = get_runtime(request)
     try:
         await runtime.kick.complete_authorization(
+            request.query_params.get("code"),
+            request.query_params.get("state"),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/")
+
+
+@app.get("/auth/twitch/start")
+async def auth_twitch_start(request: Request):
+    auth_response = require_browser_auth(request)
+    if auth_response is not None:
+        return auth_response
+    runtime = get_runtime(request)
+    try:
+        url = runtime.twitch.get_authorization_url()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(url)
+
+
+@app.get("/auth/twitch/callback")
+async def auth_twitch_callback(request: Request):
+    runtime = get_runtime(request)
+    try:
+        await runtime.twitch.complete_authorization(
             request.query_params.get("code"),
             request.query_params.get("state"),
         )
