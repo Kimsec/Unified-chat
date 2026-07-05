@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 import aiohttp
 
 from unified_chat.connectors.base import BaseConnector
 from unified_chat.models import Badge, Emote, UnifiedMessage
+from unified_chat.oauth_pending import PendingOAuthStore
 from unified_chat.utils import make_message_key, parse_datetime, utcnow
 
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+class TwitchDisconnect(RuntimeError):
+    """Expected EventSub drop (keepalive timeout / socket closed) — reconnect without a traceback."""
 
 
 @dataclass(slots=True)
@@ -37,10 +45,16 @@ class TwitchConnector(BaseConnector):
     BAN_URL = "https://api.twitch.tv/helix/moderation/bans"
     USERS_URL = "https://api.twitch.tv/helix/users"
     HYPE_TRAIN_STATUS_URL = "https://api.twitch.tv/helix/hypetrain/status"
+    AUTHORIZE_URL = "https://id.twitch.tv/oauth2/authorize"
+    TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 
     def __init__(self, settings, service) -> None:
         super().__init__(settings, service)
         self._source_broadcaster_cache: dict[str, dict[str, str | None]] = {}
+        # Only used in managed mode; harmless to create either way.
+        self._pending_oauth = PendingOAuthStore(
+            self.settings.twitch_tokens_path.with_name("twitch_oauth_pending.json")
+        )
 
     def _configured(self) -> bool:
         return bool(
@@ -64,6 +78,105 @@ class TwitchConnector(BaseConnector):
             or str(payload.get("access_token") or "")
             or str(payload.get("token") or "")
         )
+
+
+    def _manages_token(self) -> bool:
+        return self.settings.twitch_manages_token
+
+    def _save_token_file(self, payload: dict[str, Any]) -> None:
+        tmp_path = self.settings.twitch_tokens_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_path.replace(self.settings.twitch_tokens_path)
+
+    def get_authorization_url(self) -> str:
+        if not self._manages_token():
+            raise RuntimeError(
+                "Twitch is read-only here (token managed by stream-control). "
+                "Set TWITCH_CLIENT_SECRET and point TWITCH_TOKENS_PATH at data/ to enable."
+            )
+        if not self.settings.twitch_scopes:
+            raise RuntimeError("TWITCH_SCOPES is empty — set it in .env (see .env.example)")
+        state = secrets.token_urlsafe(24)
+        params = {
+            "client_id": self.settings.twitch_client_id,
+            "redirect_uri": self.settings.twitch_redirect_uri,
+            "response_type": "code",
+            "scope": self.settings.twitch_scopes,
+            "state": state,
+            "force_verify": "true",
+        }
+        self._pending_oauth.save({"state": state})
+        return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
+
+    async def complete_authorization(self, code: str | None, state: str | None) -> None:
+        if not self._manages_token():
+            raise RuntimeError("Twitch token is read-only here")
+        pending = self._pending_oauth.load()
+        if not pending:
+            raise RuntimeError("No pending Twitch authorization found; start again")
+        if not code or not state or state != pending.get("state"):
+            raise RuntimeError("Invalid Twitch OAuth callback")
+
+        data = {
+            "client_id": self.settings.twitch_client_id,
+            "client_secret": self.settings.twitch_client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": self.settings.twitch_redirect_uri,
+        }
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            async with session.post(self.TOKEN_URL, data=data) as response:
+                payload = await response.json(content_type=None)
+                if response.status >= 400:
+                    raise RuntimeError(f"Twitch token exchange failed {response.status}: {payload}")
+        self._save_token_file(self._token_payload(payload))
+        self._pending_oauth.clear()
+
+    def _token_payload(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "access_token": str(data.get("access_token") or ""),
+            "refresh_token": str(data.get("refresh_token") or ""),
+            "expires_at": (utcnow() + timedelta(seconds=int(data.get("expires_in") or 0))).isoformat(),
+        }
+
+    async def _refresh_token(self, refresh_token: str) -> dict[str, Any]:
+        data = {
+            "client_id": self.settings.twitch_client_id,
+            "client_secret": self.settings.twitch_client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            async with session.post(self.TOKEN_URL, data=data) as response:
+                payload = await response.json(content_type=None)
+                if response.status >= 400:
+                    raise RuntimeError(f"Twitch refresh failed {response.status}: {payload}")
+        return self._token_payload(payload)
+
+    async def _maybe_refresh_token(self) -> None:
+        """In managed mode, refresh the stored access token when it's near expiry.
+
+        No-op (and no network) when unmanaged, so the read-only path is untouched.
+        """
+        if not self._manages_token():
+            return
+        try:
+            raw = self.settings.twitch_tokens_path.read_text(encoding="utf-8")
+            payload = json.loads(raw)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+        expires_at = parse_datetime(payload.get("expires_at"))
+        refresh_token = payload.get("refresh_token")
+        if not refresh_token or not expires_at:
+            return
+        if expires_at > utcnow() + timedelta(minutes=30):
+            return
+        try:
+            refreshed = await self._refresh_token(refresh_token)
+        except Exception as exc:
+            self.log_transient(f"Twitch token refresh failed: {exc}")
+            return
+        self._save_token_file(refreshed)
 
     @staticmethod
     def _rate_limit_retry_at(response: aiohttp.ClientResponse) -> float:
@@ -681,11 +794,17 @@ class TwitchConnector(BaseConnector):
         websocket_url = default_websocket_url
         backoff = 5
         while not self._stop_event.is_set():
+            await self._maybe_refresh_token()
             token = self._load_access_token()
             if not token:
+                detail = (
+                    "No Twitch token yet; visit /auth/twitch/start to connect"
+                    if self._manages_token()
+                    else f"No Twitch token available in {self.settings.twitch_tokens_path}"
+                )
                 await self.set_status(
-                    state="waiting_for_token",
-                    detail=f"No Twitch token available in {self.settings.twitch_tokens_path}",
+                    state="auth_required" if self._manages_token() else "waiting_for_token",
+                    detail=detail,
                     connected=False,
                     auth_ready=False,
                 )
@@ -704,6 +823,7 @@ class TwitchConnector(BaseConnector):
                         last_error=None,
                     )
                     async with session.ws_connect(websocket_url, autoping=True) as ws:
+                        self.clear_transient()
                         await self.set_status(
                             state="connecting",
                             detail="Connected to Twitch EventSub, waiting for welcome",
@@ -729,6 +849,7 @@ class TwitchConnector(BaseConnector):
 
                         while not self._stop_event.is_set():
                             now = time.time()
+                            await self._maybe_refresh_token()
                             if session_id:
                                 for subscription_type, subscribe_func in _all_subs:
                                     if subscribed[subscription_type] or now < next_subscribe_attempt_at[subscription_type]:
@@ -906,33 +1027,23 @@ class TwitchConnector(BaseConnector):
                                 if message_type == "revocation":
                                     subscription = payload.get("subscription") or {}
                                     subscription_type = subscription.get("type")
-                                    if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
-                                        subscribed[self.CHAT_MESSAGE_SUBSCRIPTION] = False
-                                        next_subscribe_attempt_at[self.CHAT_MESSAGE_SUBSCRIPTION] = 0.0
-                                        await self.set_status(
-                                            state="subscribing",
-                                            detail="Twitch subscription revoked; resubscribing",
-                                            connected=False,
-                                            auth_ready=True,
-                                            last_error="Twitch EventSub subscription revoked",
-                                            last_error_at=utcnow(),
-                                        )
-                                    elif subscription_type == self.CHAT_NOTIFICATION_SUBSCRIPTION:
-                                        subscribed[self.CHAT_NOTIFICATION_SUBSCRIPTION] = False
-                                        next_subscribe_attempt_at[self.CHAT_NOTIFICATION_SUBSCRIPTION] = 0.0
-                                        self.log.warning("Twitch chat notification subscription revoked; resubscribing")
-                                    elif subscription_type == self.CHAT_MESSAGE_DELETE_SUBSCRIPTION:
-                                        subscribed[self.CHAT_MESSAGE_DELETE_SUBSCRIPTION] = False
-                                        next_subscribe_attempt_at[self.CHAT_MESSAGE_DELETE_SUBSCRIPTION] = 0.0
-                                        self.log.warning("Twitch chat message delete subscription revoked; resubscribing")
-                                    elif subscription_type in self.HYPE_TRAIN_TYPES:
+                                    if subscription_type in subscribed:
                                         subscribed[subscription_type] = False
                                         next_subscribe_attempt_at[subscription_type] = 0.0
-                                        self.log.warning("Twitch %s subscription revoked; resubscribing", subscription_type)
-                                    elif subscription_type == self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION:
-                                        subscribed[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = False
-                                        next_subscribe_attempt_at[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = 0.0
-                                        self.log.warning("Twitch channel points redemption subscription revoked; resubscribing")
+                                        if subscription_type == self.CHAT_MESSAGE_SUBSCRIPTION:
+                                            await self.set_status(
+                                                state="subscribing",
+                                                detail="Twitch subscription revoked; resubscribing",
+                                                connected=False,
+                                                auth_ready=True,
+                                                last_error="Twitch EventSub subscription revoked",
+                                                last_error_at=utcnow(),
+                                            )
+                                        else:
+                                            self.log.warning(
+                                                "Twitch %s subscription revoked; resubscribing",
+                                                subscription_type,
+                                            )
                                     continue
 
                             if packet.type in (
@@ -958,12 +1069,14 @@ class TwitchConnector(BaseConnector):
                             break
 
                         if disconnect_detail:
-                            raise RuntimeError(disconnect_detail)
+                            raise TwitchDisconnect(disconnect_detail)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if isinstance(exc, RuntimeError) and str(exc) == "Twitch keepalive timed out":
-                    self.log.warning("Twitch keepalive timed out, reconnecting")
+                if isinstance(exc, TwitchDisconnect):
+                    self.log.warning("%s, reconnecting", exc)
+                elif isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError)):
+                    self.log_transient(f"Twitch connection error: {type(exc).__name__}: {exc}")
                 else:
                     self.log.exception("Twitch connector error: %s", exc)
                 await self.set_status(
