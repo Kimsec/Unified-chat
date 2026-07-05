@@ -29,7 +29,7 @@
 - Reads YouTube live chat via YouTube Live Streaming API
 - Reads Kick chat via webhooks
 - Displays everything in one feed as `timestamp + platform + Name: Message`
-- Twitch emotes render as inline images
+- Twitch and Kick emotes render as inline images
 - Emote picker for composing messages with your Twitch emotes
 - Reply field that sends to Twitch only
 - Popout chat window for a clean, standalone view
@@ -242,8 +242,8 @@ If your username or paths differ, edit `unified-chat.service` first or use `unif
 
 ## Important Limitations
 
-- Unified Chat does **not** refresh Twitch tokens -- that's handled by `stream-control`
+- By default (standalone mode) Unified Chat manages and refreshes its own Twitch token. When used with `stream-control`, leave `TWITCH_CLIENT_SECRET` empty and it reads the shared token read-only (`stream-control` handles refresh)
 - Replies go to Twitch only
 - YouTube and Kick messages are not cross-posted anywhere
 - Kick webhooks require a public HTTPS URL
-- Emote rendering is Twitch-only (Kick webhooks don't include emote data)
+- Twitch and Kick emotes render as inline images (YouTube messages show as text)
