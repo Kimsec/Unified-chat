@@ -34,6 +34,14 @@ class YouTubeConnector(BaseConnector):
     CHAT_POLL_SEC = 8.0
     ERROR_RETRY_SEC = 30.0
 
+    SYSTEM_EVENT_NOTICES = {
+        "superChatEvent": "super_chat",
+        "superStickerEvent": "super_sticker",
+        "newSponsorEvent": "member",
+        "memberMilestoneChatEvent": "member_milestone",
+        "membershipGiftingEvent": "member_gift",
+    }
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._pending_oauth = PendingOAuthStore(
@@ -61,6 +69,8 @@ class YouTubeConnector(BaseConnector):
     def get_authorization_url(self) -> str:
         if not self._configured():
             raise RuntimeError("Missing YOUTUBE_CLIENT_SECRETS_FILE")
+        if not self.settings.youtube_scopes:
+            raise RuntimeError("YOUTUBE_SCOPES is empty — set it in .env (see .env.example)")
         flow = self._build_flow()
         authorization_url, state = flow.authorization_url(
             access_type="offline",
@@ -129,10 +139,87 @@ class YouTubeConnector(BaseConnector):
                 raise YouTubeApiError(response.status, data)
             return data
 
+    def _system_event_text(self, snippet_type: str, snippet: dict[str, Any], name: str) -> str | None:
+        if snippet_type == "superChatEvent":
+            details = snippet.get("superChatDetails") or {}
+            amount = str(details.get("amountDisplayString") or "").strip()
+            comment = str(details.get("userComment") or "").strip()
+            text = f"{name} sent a {amount} Super Chat" if amount else f"{name} sent a Super Chat"
+            return f"{text}: {comment}" if comment else f"{text}!"
+
+        if snippet_type == "superStickerEvent":
+            details = snippet.get("superStickerDetails") or {}
+            amount = str(details.get("amountDisplayString") or "").strip()
+            if amount:
+                return f"{name} sent a {amount} Super Sticker!"
+            return f"{name} sent a Super Sticker!"
+
+        if snippet_type == "newSponsorEvent":
+            details = snippet.get("newSponsorDetails") or {}
+            level = str(details.get("memberLevelName") or "").strip()
+            if details.get("isUpgrade"):
+                return f"{name} upgraded their membership to {level}!" if level else f"{name} upgraded their membership!"
+            return f"{name} became a member ({level})!" if level else f"{name} became a member!"
+
+        if snippet_type == "memberMilestoneChatEvent":
+            details = snippet.get("memberMilestoneChatDetails") or {}
+            months = details.get("memberMonth")
+            comment = str(details.get("userComment") or "").strip()
+            if isinstance(months, int) and months > 0:
+                text = f"{name} has been a member for {months} month{'s' if months != 1 else ''}!"
+            else:
+                text = f"{name} celebrated a membership milestone!"
+            return f"{text} {comment}".rstrip() if comment else text
+
+        if snippet_type == "membershipGiftingEvent":
+            details = snippet.get("membershipGiftingDetails") or {}
+            count = details.get("giftMembershipsCount")
+            count = count if isinstance(count, int) and count > 0 else 1
+            plural = "membership" if count == 1 else "memberships"
+            return f"{name} gifted {count} {plural}!"
+
+        return None
+
+    def _map_system_event(
+        self,
+        item: dict[str, Any],
+        live_chat_id: str,
+        snippet_type: str,
+    ) -> UnifiedMessage | None:
+        message_id = str(item.get("id") or "")
+        snippet = item.get("snippet") or {}
+        author = item.get("authorDetails") or {}
+        name = str(author.get("displayName") or "Someone")
+
+        text = self._system_event_text(snippet_type, snippet, name)
+        if not message_id or not text:
+            return None
+
+        return UnifiedMessage(
+            id=make_message_key("youtube", message_id),
+            platform="youtube",
+            platform_message_id=message_id,
+            message_kind="system",
+            notice_type=self.SYSTEM_EVENT_NOTICES[snippet_type],
+            channel_id=str(author.get("channelId") or live_chat_id),
+            author_display_name=name,
+            author_login=author.get("channelId"),
+            avatar_url=author.get("profileImageUrl"),
+            badges=[],
+            text=text,
+            sent_at=parse_datetime(snippet.get("publishedAt")) or utcnow(),
+            raw_payload=item,
+        )
+
     def _map_message(self, item: dict[str, Any], live_chat_id: str) -> UnifiedMessage | None:
         message_id = str(item.get("id") or "")
         snippet = item.get("snippet") or {}
         author = item.get("authorDetails") or {}
+
+        snippet_type = str(snippet.get("type") or "")
+        if snippet_type in self.SYSTEM_EVENT_NOTICES:
+            return self._map_system_event(item, live_chat_id, snippet_type)
+
         text = str(snippet.get("displayMessage") or "").strip()
         if not message_id or not text:
             return None
@@ -269,7 +356,21 @@ class YouTubeConnector(BaseConnector):
         next_page_token: str | None = None
 
         while not self._stop_event.is_set():
-            credentials = await asyncio.to_thread(self._load_credentials)
+            try:
+                credentials = await asyncio.to_thread(self._load_credentials)
+            except Exception as exc:
+                self.log_transient(f"YouTube credentials unavailable: {exc}")
+                await self.set_status(
+                    state="auth_required",
+                    detail="YouTube credentials invalid; visit /auth/youtube/start to re-authorize",
+                    connected=False,
+                    auth_ready=False,
+                    last_error=str(exc),
+                    last_error_at=utcnow(),
+                )
+                if await self.sleep_or_stop(30):
+                    break
+                continue
             if credentials is None:
                 await self.set_status(
                     state="auth_required",
@@ -338,6 +439,7 @@ class YouTubeConnector(BaseConnector):
                                 last_error=None,
                             )
 
+                    self.clear_transient()
                     next_page_token = messages.get("nextPageToken") or next_page_token
                     wait_seconds = self._chat_poll_seconds(messages)
                     if messages.get("offlineAt"):
@@ -386,7 +488,10 @@ class YouTubeConnector(BaseConnector):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.log.exception("YouTube connector error: %s", exc)
+                if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError)):
+                    self.log_transient(f"YouTube connection error: {type(exc).__name__}: {exc}")
+                else:
+                    self.log.exception("YouTube connector error: %s", exc)
                 await self.set_status(
                     state="reconnecting",
                     detail="Retrying YouTube chat polling",
