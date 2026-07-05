@@ -167,8 +167,14 @@ function linkifyText(text) {
   return result;
 }
 
-function renderMessageText(text, emotes) {
+const EMOTE_IMAGE_URLS = {
+  twitch: (id) => `https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0`,
+  kick: (id) => `https://files.kick.com/emotes/${id}/fullsize`,
+};
+
+function renderMessageText(text, emotes, platform) {
   if (!emotes || !emotes.length) return linkifyText(text);
+  const emoteUrl = EMOTE_IMAGE_URLS[platform] || EMOTE_IMAGE_URLS.twitch;
   const sorted = [...emotes].sort((a, b) => a.begin - b.begin);
   let result = "";
   let cursor = 0;
@@ -176,7 +182,7 @@ function renderMessageText(text, emotes) {
     if (emote.begin > cursor) {
       result += linkifyText(text.slice(cursor, emote.begin));
     }
-    result += `<img class="emote" src="https://static-cdn.jtvnw.net/emoticons/v2/${emote.id}/default/dark/1.0" alt="${escapeHtml(emote.text)}" title="${escapeHtml(emote.text)}">`;
+    result += `<img class="emote" src="${emoteUrl(encodeURIComponent(emote.id))}" alt="${escapeHtml(emote.text)}" title="${escapeHtml(emote.text)}">`;
     cursor = emote.end;
   }
   if (cursor < text.length) {
@@ -218,7 +224,7 @@ function renderMessages() {
     const readableColor = ensureReadableColor(message.author_color);
     const authorStyle = readableColor ? `style="color:${readableColor}"` : "";
     const sourceBroadcaster = message.raw_payload?.payload?.event?.source_broadcaster || null;
-    const isSystemNotice = message.platform === "twitch" && message.message_kind === "system";
+    const isSystemNotice = message.message_kind === "system";
     const sourceAvatar = message.platform === "twitch" && message.avatar_url
       ? `<img class="source-streamer-avatar" src="${escapeHtml(message.avatar_url)}" alt="" title="${escapeHtml(sourceBroadcaster?.name || sourceBroadcaster?.login || "Shared chat source")}" aria-hidden="true">`
       : "";
@@ -226,7 +232,7 @@ function renderMessages() {
     if (isSystemNotice) {
       return `
         <article class="${messageClass} system-notice" data-platform="${message.platform}">
-          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes)}</span></span>
+          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
         </article>
       `;
     }
@@ -240,7 +246,7 @@ function renderMessages() {
 
     return `
       <article class="${messageClass}" data-platform="${message.platform}">
-        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes)}</span></span>
+        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
       </article>
     `;
   }).join("");
@@ -438,9 +444,12 @@ async function fetchBootstrap() {
   applyBootstrap(payload);
 }
 
+let activeSocket = null;
+
 function connectSocket() {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${scheme}://${window.location.host}/ws/chat`);
+  activeSocket = socket;
   socket.addEventListener("message", (event) => {
     try {
       handleSocketPayload(JSON.parse(event.data));
@@ -450,9 +459,19 @@ function connectSocket() {
     socket.send("ready");
   });
   socket.addEventListener("close", () => {
-    window.setTimeout(connectSocket, 3000);
+    if (socket !== activeSocket) return; // superseded by a newer connection
+    window.setTimeout(() => {
+      if (socket === activeSocket) connectSocket();
+    }, 3000);
   });
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (!activeSocket || activeSocket.readyState === WebSocket.CLOSING || activeSocket.readyState === WebSocket.CLOSED) {
+    connectSocket();
+  }
+});
 
 function escapeHtml(value) {
   return String(value)
