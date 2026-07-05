@@ -25,11 +25,11 @@ class ChatService:
         self._hype_train: dict | None = None
         self._hype_train_hide_at: float | None = None
 
-    def clear_messages(self) -> None:
-        self.store.clear_messages()
+    async def clear_messages(self) -> None:
+        await asyncio.to_thread(self.store.clear_messages)
 
-    def get_messages(self, limit: int = 200) -> list[UnifiedMessage]:
-        return self.store.list_messages(limit)
+    async def get_messages(self, limit: int = 200) -> list[UnifiedMessage]:
+        return await asyncio.to_thread(self.store.list_messages, limit)
 
     def get_statuses(self) -> list[ConnectorStatus]:
         return [self._statuses[key] for key in ("twitch", "youtube", "kick")]
@@ -46,7 +46,9 @@ class ChatService:
         platform_message_id: str,
         deleted_at: datetime,
     ) -> bool:
-        marked = self.store.mark_message_deleted(platform, platform_message_id, deleted_at)
+        marked = await asyncio.to_thread(
+            self.store.mark_message_deleted, platform, platform_message_id, deleted_at
+        )
         if marked:
             await self.hub.broadcast(
                 {
@@ -114,18 +116,26 @@ class ChatService:
         payload = self.get_hype_train() or dict(data)
         await self.hub.broadcast(payload)
 
+    _STATUS_BROADCAST_FIELDS = ("state", "connected", "auth_ready", "detail", "last_error")
+
     async def set_status(self, platform: str, **updates) -> ConnectorStatus:
         async with self._lock:
             current = self._statuses[platform]
             merged = current.model_copy(update=updates)
             self._statuses[platform] = merged
-        await self.hub.broadcast({"type": "status", "status": merged.model_dump(mode="json")})
+            should_broadcast = any(
+                getattr(current, field) != getattr(merged, field)
+                for field in self._STATUS_BROADCAST_FIELDS
+            )
+        if should_broadcast:
+            await self.hub.broadcast({"type": "status", "status": merged.model_dump(mode="json")})
         return merged
 
     async def bootstrap_event(self, limit: int = 200) -> dict:
+        messages = await self.get_messages(limit)
         return {
             "type": "bootstrap",
-            "messages": [message.model_dump(mode="json") for message in self.get_messages(limit)],
+            "messages": [message.model_dump(mode="json") for message in messages],
             "statuses": [status.model_dump(mode="json") for status in self.get_statuses()],
             "hype_train": self.get_hype_train(),
         }
