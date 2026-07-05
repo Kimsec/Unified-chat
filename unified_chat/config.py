@@ -49,9 +49,12 @@ class Settings:
     popout_token: str
     database_path: Path
     twitch_client_id: str
+    twitch_client_secret: str
     twitch_broadcaster_id: str
     twitch_tokens_path: Path
     twitch_eventsub_ws_url: str
+    twitch_redirect_uri: str
+    twitch_scopes: str
     youtube_client_secrets_file: Path | None
     youtube_token_path: Path
     youtube_redirect_uri: str
@@ -66,10 +69,23 @@ class Settings:
     template_dir: Path
     static_dir: Path
 
+    @property
+    def twitch_manages_token(self) -> bool:
+        if not self.twitch_client_secret:
+            return False
+        data_dir = (self.database_path.parent).resolve()
+        try:
+            self.twitch_tokens_path.resolve().relative_to(data_dir)
+            return True
+        except ValueError:
+            return False
+
     def ensure_dirs(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.youtube_token_path.parent.mkdir(parents=True, exist_ok=True)
         self.kick_token_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.twitch_manages_token:
+            self.twitch_tokens_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_settings() -> Settings:
@@ -86,6 +102,12 @@ def load_settings() -> Settings:
         os.getenv("SESSION_COOKIE_SECURE"),
         default=app_base_url.startswith("https://"),
     )
+    kick_broadcaster_user_id = os.getenv("KICK_BROADCASTER_USER_ID", "").strip()
+    if kick_broadcaster_user_id and not kick_broadcaster_user_id.isdigit():
+        raise RuntimeError(
+            "KICK_BROADCASTER_USER_ID must be a numeric Kick user id, "
+            f"got {kick_broadcaster_user_id!r}"
+        )
 
     settings = Settings(
         project_dir=PROJECT_DIR,
@@ -102,28 +124,29 @@ def load_settings() -> Settings:
         popout_token=os.getenv("POPOUT_TOKEN", "").strip(),
         database_path=Path(os.getenv("DATABASE_PATH", str(PROJECT_DIR / "data" / "unified_chat.db"))).expanduser(),
         twitch_client_id=os.getenv("TWITCH_CLIENT_ID", "").strip(),
+        twitch_client_secret=os.getenv("TWITCH_CLIENT_SECRET", "").strip(),
         twitch_broadcaster_id=os.getenv("TWITCH_BROADCASTER_ID", "").strip(),
         twitch_tokens_path=Path(
-            os.getenv("TWITCH_TOKENS_PATH", "../stream-control/twitch_tokens.json")
+            os.getenv("TWITCH_TOKENS_PATH", str(PROJECT_DIR / "data" / "twitch_tokens.json"))
         ).expanduser(),
         twitch_eventsub_ws_url=os.getenv("TWITCH_EVENTSUB_WS_URL", "wss://eventsub.wss.twitch.tv/ws").strip(),
+        twitch_redirect_uri=os.getenv("TWITCH_REDIRECT_URI", f"{app_base_url}/auth/twitch/callback").strip(),
+        twitch_scopes=os.getenv("TWITCH_SCOPES", "").strip(),
         youtube_client_secrets_file=_optional_path(os.getenv("YOUTUBE_CLIENT_SECRETS_FILE")),
         youtube_token_path=Path(
             os.getenv("YOUTUBE_TOKEN_PATH", str(PROJECT_DIR / "data" / "youtube_tokens.json"))
         ).expanduser(),
         youtube_redirect_uri=os.getenv("YOUTUBE_REDIRECT_URI", f"{app_base_url}/auth/youtube/callback").strip(),
-        youtube_scopes=_split_scopes(
-            os.getenv("YOUTUBE_SCOPES", "https://www.googleapis.com/auth/youtube.readonly")
-        ),
+        youtube_scopes=_split_scopes(os.getenv("YOUTUBE_SCOPES", "")),
         youtube_poll_fallback_sec=max(1, int(os.getenv("YOUTUBE_POLL_FALLBACK_SEC", "8"))),
         kick_client_id=os.getenv("KICK_CLIENT_ID", "").strip(),
         kick_client_secret=os.getenv("KICK_CLIENT_SECRET", "").strip(),
-        kick_broadcaster_user_id=os.getenv("KICK_BROADCASTER_USER_ID", "").strip(),
+        kick_broadcaster_user_id=kick_broadcaster_user_id,
         kick_token_path=Path(
             os.getenv("KICK_TOKEN_PATH", str(PROJECT_DIR / "data" / "kick_tokens.json"))
         ).expanduser(),
         kick_redirect_uri=os.getenv("KICK_REDIRECT_URI", f"{app_base_url}/auth/kick/callback").strip(),
-        kick_scope=os.getenv("KICK_SCOPE", "events:subscribe").strip(),
+        kick_scope=os.getenv("KICK_SCOPE", "").strip(),
         template_dir=PROJECT_DIR / "unified_chat" / "templates",
         static_dir=PROJECT_DIR / "unified_chat" / "static",
     )
