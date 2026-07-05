@@ -601,11 +601,6 @@ h2 {
     animation: fade-in 220ms ease;
 }
 
-.message-card.system-notice {
-    background: rgba(145, 70, 255, 0.06);
-    border-color: rgba(145, 70, 255, 0.12);
-}
-
 .message-card.deleted {
     opacity: 0.72;
 }
@@ -626,7 +621,7 @@ h2 {
     inherits: false;
 }
 
-.message-card.system-notice[data-platform="twitch"] {
+.message-card.system-notice {
     border: 2px solid transparent;
     background:
         linear-gradient(rgba(145, 70, 255, 0.08), rgba(145, 70, 255, 0.08)) padding-box,
