@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import secrets
 from datetime import timedelta
 from typing import Any
@@ -15,11 +16,15 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from unified_chat.connectors.base import BaseConnector
-from unified_chat.models import Badge, UnifiedMessage
+from unified_chat.models import Badge, Emote, UnifiedMessage
 from unified_chat.oauth_pending import PendingOAuthStore
 from unified_chat.utils import make_message_key, parse_datetime, utcnow
 
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+class KickAuthError(RuntimeError):
+    """Raised when Kick OAuth token is invalid or rejected."""
 
 
 DEFAULT_KICK_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
@@ -32,6 +37,32 @@ BEbZ5jgB8s8ReQV8H+MkuffjdAj3ajDDX3DOJMIut1lBrUVD1AaSrGCKHooWoL2e
 twIDAQAB
 -----END PUBLIC KEY-----
 """
+
+_EMOTE_MARKER_RE = re.compile(r"\[emote:(\d+):([^\]]*)\]")
+
+
+def parse_kick_emotes(content: str) -> tuple[str, list[Emote]]:
+    """Replace emote markers with their name and return (clean_text, emotes).
+
+    Emote begin/end positions refer to the cleaned text, matching how Twitch
+    emote fragments are recorded, so the frontend renders both identically.
+    """
+    emotes: list[Emote] = []
+    parts: list[str] = []
+    cursor = 0
+    length = 0
+    for match in _EMOTE_MARKER_RE.finditer(content):
+        before = content[cursor:match.start()]
+        parts.append(before)
+        length += len(before)
+        emote_id = match.group(1)
+        name = match.group(2) or emote_id
+        parts.append(name)
+        emotes.append(Emote(id=emote_id, text=name, begin=length, end=length + len(name)))
+        length += len(name)
+        cursor = match.end()
+    parts.append(content[cursor:])
+    return "".join(parts), emotes
 
 
 def build_kick_signature_payload(message_id: str, timestamp: str, raw_body: bytes) -> bytes:
@@ -58,6 +89,18 @@ class KickConnector(BaseConnector):
     OAUTH_BASE_URL = "https://id.kick.com"
     API_BASE_URL = "https://api.kick.com/public/v1"
     WEBHOOK_ACTIVITY_WINDOW = timedelta(minutes=10)
+
+    CHAT_EVENT = "chat.message.sent"
+    SUB_NEW_EVENT = "channel.subscription.new"
+    SUB_RENEWAL_EVENT = "channel.subscription.renewal"
+    SUB_GIFTS_EVENT = "channel.subscription.gifts"
+    SUBSCRIPTION_EVENTS = frozenset({SUB_NEW_EVENT, SUB_RENEWAL_EVENT, SUB_GIFTS_EVENT})
+    WEBHOOK_EVENTS = (
+        (CHAT_EVENT, 1),
+        (SUB_NEW_EVENT, 1),
+        (SUB_RENEWAL_EVENT, 1),
+        (SUB_GIFTS_EVENT, 1),
+    )
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -99,6 +142,8 @@ class KickConnector(BaseConnector):
     async def get_authorization_url(self) -> str:
         if not self._configured():
             raise RuntimeError("Missing KICK_CLIENT_ID or KICK_CLIENT_SECRET")
+        if not self.settings.kick_scope:
+            raise RuntimeError("KICK_SCOPE is empty — set it in .env (see .env.example)")
 
         oauth_state = secrets.token_urlsafe(24)
         code_verifier = secrets.token_urlsafe(48)
@@ -178,6 +223,8 @@ class KickConnector(BaseConnector):
             ) as response:
                 data = await response.json(content_type=None)
                 if response.status >= 400:
+                    if response.status != 429 and response.status < 500:
+                        raise KickAuthError(f"Kick refresh rejected {response.status}: {data}")
                     raise RuntimeError(f"Kick refresh failed {response.status}: {data}")
         return {
             **data,
@@ -219,6 +266,8 @@ class KickConnector(BaseConnector):
             ) as response:
                 data = await response.json(content_type=None)
                 if response.status >= 400:
+                    if response.status != 429 and response.status < 500:
+                        raise KickAuthError(f"Kick app token rejected {response.status}: {data}")
                     raise RuntimeError(f"Kick app token failed {response.status}: {data}")
         self._app_token_cache = {
             **data,
@@ -242,7 +291,7 @@ class KickConnector(BaseConnector):
         expected_broadcaster = self.settings.kick_broadcaster_user_id
         broadcaster_user_id = subscription.get("broadcaster_user_id")
 
-        if name != "chat.message.sent" or version != "1":
+        if (name, version) not in {(n, str(v)) for n, v in self.WEBHOOK_EVENTS}:
             return False
         if expected_broadcaster and broadcaster_user_id not in (None, int(expected_broadcaster), str(expected_broadcaster)):
             return False
@@ -274,7 +323,12 @@ class KickConnector(BaseConnector):
                 for subscription in subscriptions
                 if isinstance(subscription, dict) and self._subscription_matches(subscription)
             ]
-            if matching_subscriptions and self._subscription_refreshed:
+            covered_events = {
+                str(subscription.get("name") or subscription.get("event") or "")
+                for subscription in matching_subscriptions
+            }
+            all_events_covered = covered_events >= {name for name, _ in self.WEBHOOK_EVENTS}
+            if all_events_covered and self._subscription_refreshed:
                 return
 
             if matching_subscriptions:
@@ -286,7 +340,7 @@ class KickConnector(BaseConnector):
                     await self._delete_subscriptions(session, subscription_ids)
 
             body: dict[str, Any] = {
-                "events": [{"name": "chat.message.sent", "version": 1}],
+                "events": [{"name": name, "version": version} for name, version in self.WEBHOOK_EVENTS],
                 "method": "webhook",
             }
             if mode == "app":
@@ -305,8 +359,25 @@ class KickConnector(BaseConnector):
         message_id = str(payload.get("message_id") or "")
         sender = payload.get("sender") or {}
         identity = sender.get("identity") or {}
-        text = str(payload.get("content") or "").strip()
-        if not message_id or not text:
+        content = str(payload.get("content") or "")
+        text, emotes = parse_kick_emotes(content)
+        if not emotes:
+            text = text.strip()
+
+        # Kick replies carry the tagged user in replies_to, not in content,
+        # so restore the "@username " prefix the Kick UI shows.
+        replies_to = payload.get("replies_to")
+        reply_sender = replies_to.get("sender") or {} if isinstance(replies_to, dict) else {}
+        mention = str(reply_sender.get("username") or "").strip()
+        if mention and not text.lower().startswith(f"@{mention.lower()}"):
+            prefix = f"@{mention} "
+            text = prefix + text
+            emotes = [
+                Emote(id=emote.id, text=emote.text, begin=emote.begin + len(prefix), end=emote.end + len(prefix))
+                for emote in emotes
+            ]
+
+        if not message_id or not text.strip():
             return None
 
         badges = [
@@ -329,6 +400,66 @@ class KickConnector(BaseConnector):
             author_color=identity.get("username_color"),
             avatar_url=sender.get("profile_picture"),
             badges=badges,
+            emotes=emotes,
+            text=text,
+            sent_at=parse_datetime(payload.get("created_at")) or utcnow(),
+            raw_payload=payload,
+        )
+
+    def _map_subscription_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        delivery_id: str,
+    ) -> UnifiedMessage | None:
+        """Map a Kick subscription webhook to a system-notice message.
+
+        Subscription payloads carry no message id, so the unique
+        Kick-Event-Message-Id delivery header doubles as the dedup key.
+        """
+        if not delivery_id:
+            return None
+
+        broadcaster = payload.get("broadcaster") or {}
+        duration = payload.get("duration")
+        months = duration if isinstance(duration, int) else 0
+
+        if event_type == self.SUB_GIFTS_EVENT:
+            gifter = payload.get("gifter") or {}
+            anonymous = bool(gifter.get("is_anonymous")) or not gifter.get("username")
+            author = {} if anonymous else gifter
+            name = "Anonymous" if anonymous else str(gifter.get("username"))
+            count = max(len(payload.get("giftees") or []), 1)
+            plural = "subscription" if count == 1 else "subscriptions"
+            text = f"{name} gifted {count} {plural}!"
+            notice_type = "sub_gift"
+        else:
+            author = payload.get("subscriber") or {}
+            name = str(author.get("username") or "Someone")
+            if event_type == self.SUB_RENEWAL_EVENT:
+                notice_type = "resub"
+                text = f"{name} resubscribed!"
+                if months > 1:
+                    text += f" They've been subscribed for {months} months!"
+            else:
+                notice_type = "sub"
+                if months > 1:
+                    text = f"{name} subscribed for {months} months!"
+                else:
+                    text = f"{name} subscribed!"
+
+        return UnifiedMessage(
+            id=make_message_key("kick", delivery_id),
+            platform="kick",
+            platform_message_id=delivery_id,
+            message_kind="system",
+            notice_type=notice_type,
+            channel_id=str(broadcaster.get("user_id") or self.settings.kick_broadcaster_user_id or ""),
+            author_display_name=name,
+            author_login=author.get("channel_slug") or author.get("username"),
+            author_id=str(author.get("user_id") or "") or None,
+            avatar_url=None,
+            badges=[],
             text=text,
             sent_at=parse_datetime(payload.get("created_at")) or utcnow(),
             raw_payload=payload,
@@ -342,7 +473,7 @@ class KickConnector(BaseConnector):
             raise RuntimeError(str(exc)) from exc
 
         event_type = headers.get("Kick-Event-Type") or headers.get("kick-event-type") or ""
-        if event_type != "chat.message.sent":
+        if event_type != self.CHAT_EVENT and event_type not in self.SUBSCRIPTION_EVENTS:
             self.log.debug("Ignoring Kick webhook event type: %s", event_type)
             return None
 
@@ -351,7 +482,12 @@ class KickConnector(BaseConnector):
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             self.log.warning("Malformed Kick webhook body: %s", exc)
             raise ValueError("Invalid webhook payload") from exc
-        unified = self._map_message(payload)
+
+        if event_type == self.CHAT_EVENT:
+            unified = self._map_message(payload)
+        else:
+            delivery_id = headers.get("Kick-Event-Message-Id") or headers.get("kick-event-message-id") or ""
+            unified = self._map_subscription_event(event_type, payload, delivery_id)
         if unified is not None:
             self._webhook_seen = True
             self._last_webhook_at = utcnow()
@@ -393,6 +529,7 @@ class KickConnector(BaseConnector):
                     continue
 
                 await self._ensure_chat_subscription(access_token, mode)
+                self.clear_transient()
                 state, detail, connected = self._delivery_status()
                 await self.set_status(
                     state=state,
@@ -405,8 +542,23 @@ class KickConnector(BaseConnector):
                     break
             except asyncio.CancelledError:
                 raise
+            except KickAuthError as exc:
+                self.log_transient(f"Kick authorization invalid: {exc}")
+                await self.set_status(
+                    state="auth_required",
+                    detail="Kick authorization expired; visit /auth/kick/start to re-authorize",
+                    connected=False,
+                    auth_ready=False,
+                    last_error=str(exc),
+                    last_error_at=utcnow(),
+                )
+                if await self.sleep_or_stop(60):
+                    break
             except Exception as exc:
-                self.log.exception("Kick connector error: %s", exc)
+                if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError)):
+                    self.log_transient(f"Kick connection error: {type(exc).__name__}: {exc}")
+                else:
+                    self.log.exception("Kick connector error: %s", exc)
                 await self.set_status(
                     state="reconnecting",
                     detail="Retrying Kick subscription setup",
