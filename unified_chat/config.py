@@ -59,7 +59,6 @@ class Settings:
     youtube_token_path: Path
     youtube_redirect_uri: str
     youtube_scopes: list[str]
-    youtube_poll_fallback_sec: int
     kick_client_id: str
     kick_client_secret: str
     kick_broadcaster_user_id: str
@@ -138,7 +137,6 @@ def load_settings() -> Settings:
         ).expanduser(),
         youtube_redirect_uri=os.getenv("YOUTUBE_REDIRECT_URI", f"{app_base_url}/auth/youtube/callback").strip(),
         youtube_scopes=_split_scopes(os.getenv("YOUTUBE_SCOPES", "")),
-        youtube_poll_fallback_sec=max(1, int(os.getenv("YOUTUBE_POLL_FALLBACK_SEC", "8"))),
         kick_client_id=os.getenv("KICK_CLIENT_ID", "").strip(),
         kick_client_secret=os.getenv("KICK_CLIENT_SECRET", "").strip(),
         kick_broadcaster_user_id=kick_broadcaster_user_id,
