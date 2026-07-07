@@ -94,12 +94,14 @@ class KickConnector(BaseConnector):
     SUB_NEW_EVENT = "channel.subscription.new"
     SUB_RENEWAL_EVENT = "channel.subscription.renewal"
     SUB_GIFTS_EVENT = "channel.subscription.gifts"
+    KICKS_GIFTED_EVENT = "kicks.gifted"
     SUBSCRIPTION_EVENTS = frozenset({SUB_NEW_EVENT, SUB_RENEWAL_EVENT, SUB_GIFTS_EVENT})
     WEBHOOK_EVENTS = (
         (CHAT_EVENT, 1),
         (SUB_NEW_EVENT, 1),
         (SUB_RENEWAL_EVENT, 1),
         (SUB_GIFTS_EVENT, 1),
+        (KICKS_GIFTED_EVENT, 1),
     )
 
     def __init__(self, *args, **kwargs) -> None:
@@ -465,6 +467,48 @@ class KickConnector(BaseConnector):
             raw_payload=payload,
         )
 
+    def _map_kicks_event(self, payload: dict[str, Any], delivery_id: str) -> UnifiedMessage | None:
+        """Map a Kick 'kicks.gifted' webhook to a system-notice message.
+
+        Like subscription events, the payload carries no message id, so the
+        unique Kick-Event-Message-Id delivery header is the dedup key.
+        """
+        if not delivery_id:
+            return None
+
+        sender = payload.get("sender") or {}
+        gift = payload.get("gift") or {}
+        broadcaster = payload.get("broadcaster") or {}
+
+        anonymous = bool(sender.get("is_anonymous")) or not sender.get("username")
+        name = "Anonymous" if anonymous else str(sender.get("username"))
+        author = {} if anonymous else sender
+
+        amount = gift.get("amount")
+        amount = amount if isinstance(amount, int) and amount > 0 else 0
+        unit = "Kick" if amount == 1 else "Kicks"
+        text = f"{name} sent {amount} {unit}!" if amount else f"{name} sent Kicks!"
+        message = str(gift.get("message") or "").strip()
+        if message:
+            text += f" {message}"
+
+        return UnifiedMessage(
+            id=make_message_key("kick", delivery_id),
+            platform="kick",
+            platform_message_id=delivery_id,
+            message_kind="system",
+            notice_type="kicks",
+            channel_id=str(broadcaster.get("user_id") or self.settings.kick_broadcaster_user_id or ""),
+            author_display_name=name,
+            author_login=author.get("channel_slug") or author.get("username"),
+            author_id=str(author.get("user_id") or "") or None,
+            avatar_url=None,
+            badges=[],
+            text=text,
+            sent_at=parse_datetime(payload.get("created_at")) or utcnow(),
+            raw_payload=payload,
+        )
+
     async def handle_webhook(self, headers: dict[str, str], raw_body: bytes) -> UnifiedMessage | None:
         try:
             verify_kick_signature(headers, raw_body)
@@ -473,7 +517,11 @@ class KickConnector(BaseConnector):
             raise RuntimeError(str(exc)) from exc
 
         event_type = headers.get("Kick-Event-Type") or headers.get("kick-event-type") or ""
-        if event_type != self.CHAT_EVENT and event_type not in self.SUBSCRIPTION_EVENTS:
+        if (
+            event_type != self.CHAT_EVENT
+            and event_type != self.KICKS_GIFTED_EVENT
+            and event_type not in self.SUBSCRIPTION_EVENTS
+        ):
             self.log.debug("Ignoring Kick webhook event type: %s", event_type)
             return None
 
@@ -485,6 +533,9 @@ class KickConnector(BaseConnector):
 
         if event_type == self.CHAT_EVENT:
             unified = self._map_message(payload)
+        elif event_type == self.KICKS_GIFTED_EVENT:
+            delivery_id = headers.get("Kick-Event-Message-Id") or headers.get("kick-event-message-id") or ""
+            unified = self._map_kicks_event(payload, delivery_id)
         else:
             delivery_id = headers.get("Kick-Event-Message-Id") or headers.get("kick-event-message-id") or ""
             unified = self._map_subscription_event(event_type, payload, delivery_id)
