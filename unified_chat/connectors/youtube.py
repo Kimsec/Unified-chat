@@ -19,8 +19,6 @@ from unified_chat.oauth_pending import PendingOAuthStore
 from unified_chat.utils import make_message_key, parse_datetime, utcnow
 
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
-# The /stream connection is long-lived: no total cap, but treat a socket that
-# goes silent longer than sock_read as dead and reconnect.
 _STREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_read=80)
 
 
@@ -32,14 +30,6 @@ class YouTubeApiError(RuntimeError):
 
 
 class _StreamArrayDecoder:
-    """Incrementally pull complete objects from a streamed JSON array.
-
-    The /stream endpoint sends `[{...},{...},...` over an open connection and the
-    closing `]` never arrives while the chat is live. Feed decoded text chunks;
-    each call returns the array elements (dicts) that completed in that chunk.
-    Braces inside strings and escaped quotes are handled so message text with
-    `{`/`}`/`"` can't confuse the framing.
-    """
 
     def __init__(self) -> None:
         self._buf = ""
@@ -78,9 +68,6 @@ class _StreamArrayDecoder:
                             pass
                         cut = i + 1
                         obj_start = -1
-        # Retain only the unconsumed tail: an in-progress object, or the trailing
-        # separators/whitespace between objects. Re-scanned fresh next feed, so no
-        # brace/string state is carried across calls.
         self._buf = buf[obj_start:] if depth > 0 and obj_start >= 0 else buf[cut:]
         return results
 
@@ -89,9 +76,6 @@ class YouTubeConnector(BaseConnector):
     platform = "youtube"
     BROADCASTS_URL = "https://www.googleapis.com/youtube/v3/liveBroadcasts"
     CHAT_MESSAGES_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages"
-    # Streaming transport of the recommended streamList method (not in the REST
-    # discovery doc, but a working HTTPS endpoint). One open connection replaces
-    # polling — no quota drain, no stale pageToken.
     CHAT_STREAM_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages/stream"
     DISCOVERY_POLL_SEC = 30.0
     ERROR_RETRY_SEC = 30.0
@@ -398,9 +382,12 @@ class YouTubeConnector(BaseConnector):
                 except Exception:
                     data = (await response.text())[:300]
                 raise YouTubeApiError(response.status, data)
-            async for chunk in response.content.iter_any():
-                for obj in decoder.feed(utf8.decode(chunk)):
-                    yield obj
+            try:
+                async for chunk in response.content.iter_any():
+                    for obj in decoder.feed(utf8.decode(chunk)):
+                        yield obj
+            except (aiohttp.ClientPayloadError, aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                return
 
     def _api_error_reason(self, exc: YouTubeApiError) -> str | None:
         error = exc.data.get("error") if isinstance(exc.data, dict) else None
@@ -494,44 +481,58 @@ class YouTubeConnector(BaseConnector):
                         auth_ready=True,
                         last_error=None,
                     )
-                    ended = False
-                    stream = self._stream_chat_messages(
-                        session, credentials.token, live_chat_id, next_page_token
-                    )
-                    async with contextlib.aclosing(stream) as responses:
-                        async for response_obj in responses:
-                            self.clear_transient()
-                            for item in response_obj.get("items") or []:
-                                unified = self._map_message(item, live_chat_id)
-                                if unified is not None:
-                                    await self.service.publish_message(unified)
-                            token = response_obj.get("nextPageToken")
-                            if token:
-                                next_page_token = token
-                            if response_obj.get("offlineAt"):
-                                self.log.info("YouTube broadcast went offline")
-                                live_chat_id = None
-                                next_page_token = None
-                                ended = True
+                    rediscover = False
+                    empty_reconnects = 0
+                    while not self._stop_event.is_set():
+                        got_response = False
+                        stream = self._stream_chat_messages(
+                            session, credentials.token, live_chat_id, next_page_token
+                        )
+                        async with contextlib.aclosing(stream) as responses:
+                            async for response_obj in responses:
+                                got_response = True
+                                self.clear_transient()
+                                for item in response_obj.get("items") or []:
+                                    unified = self._map_message(item, live_chat_id)
+                                    if unified is not None:
+                                        await self.service.publish_message(unified)
+                                token = response_obj.get("nextPageToken")
+                                if token:
+                                    next_page_token = token
+                                if response_obj.get("offlineAt"):
+                                    self.log.info("YouTube broadcast went offline")
+                                    live_chat_id = None
+                                    next_page_token = None
+                                    rediscover = True
+                                    await self.set_status(
+                                        state="idle",
+                                        detail="YouTube broadcast ended",
+                                        connected=False,
+                                        auth_ready=True,
+                                        last_error=None,
+                                    )
+                                    break
                                 await self.set_status(
-                                    state="idle",
-                                    detail="YouTube broadcast ended",
-                                    connected=False,
+                                    state="connected",
+                                    detail="Streaming YouTube chat messages",
+                                    connected=True,
                                     auth_ready=True,
                                     last_error=None,
                                 )
-                                break
-                            await self.set_status(
-                                state="connected",
-                                detail="Streaming YouTube chat messages",
-                                connected=True,
-                                auth_ready=True,
-                                last_error=None,
-                            )
-                # Stream closed. Rediscover after a broadcast ends; otherwise
-                # reconnect promptly, resuming from the last nextPageToken.
-                if await self.sleep_or_stop(self.DISCOVERY_POLL_SEC if ended else 2.0):
-                    break
+                        if rediscover or self._stop_event.is_set():
+                            break
+                        if got_response:
+                            empty_reconnects = 0
+                            delay = 1.0
+                        else:
+                            empty_reconnects += 1
+                            delay = min(2.0 * empty_reconnects, self.ERROR_RETRY_SEC)
+                        if await self.sleep_or_stop(delay):
+                            return
+                    if rediscover:
+                        if await self.sleep_or_stop(self.DISCOVERY_POLL_SEC):
+                            break
+                        continue
             except YouTubeApiError as exc:
                 if self._is_quota_exceeded(exc):
                     wait_seconds = self._seconds_until_quota_reset()
@@ -551,14 +552,11 @@ class YouTubeConnector(BaseConnector):
                         break
                     continue
                 if exc.status == 401:
-                    # Token rejected mid-stream; next loop reloads/refreshes creds.
                     self.log_transient("YouTube stream unauthorized; refreshing credentials")
                     if await self.sleep_or_stop(2.0):
                         break
                     continue
                 if exc.status == 404:
-                    # The undocumented /stream endpoint is gone or changed. Fail
-                    # loudly — no silent fallback to the quota-hungry list polling.
                     self.log.error(
                         "YouTube /stream returned 404 — the streaming endpoint may have "
                         "changed; YouTube chat is unavailable until the connector is updated."
