@@ -58,3 +58,7 @@ class ModerationRequest(BaseModel):
     user_id: str
     duration: int | None = None
     reason: str | None = None
+
+
+class DeleteMessageRequest(BaseModel):
+    message_id: str
