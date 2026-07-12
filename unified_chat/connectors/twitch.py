@@ -43,6 +43,7 @@ class TwitchConnector(BaseConnector):
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
     BAN_URL = "https://api.twitch.tv/helix/moderation/bans"
+    MODERATION_CHAT_URL = "https://api.twitch.tv/helix/moderation/chat"
     USERS_URL = "https://api.twitch.tv/helix/users"
     HYPE_TRAIN_STATUS_URL = "https://api.twitch.tv/helix/hypetrain/status"
     AUTHORIZE_URL = "https://id.twitch.tv/oauth2/authorize"
@@ -779,6 +780,50 @@ class TwitchConnector(BaseConnector):
                         continue
                     raise RuntimeError(f"Twitch ban failed {response.status}: {payload}")
         raise RuntimeError("Unable to ban Twitch user")
+
+    async def delete_message(self, message_id: str) -> dict[str, Any]:
+        target = str(message_id or "").strip()
+        if not target:
+            raise ValueError("message_id is required")
+
+        params = {
+            "broadcaster_id": self.settings.twitch_broadcaster_id,
+            "moderator_id": self.settings.twitch_broadcaster_id,
+            "message_id": target,
+        }
+        token = self._load_access_token()
+        if not token:
+            raise RuntimeError("No Twitch access token found")
+
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            for attempt in range(2):
+                headers = {
+                    "Client-Id": self.settings.twitch_client_id,
+                    "Authorization": f"Bearer {token}",
+                }
+                async with session.delete(
+                    self.MODERATION_CHAT_URL,
+                    headers=headers,
+                    params=params,
+                ) as response:
+                    if response.status in (200, 204):
+                        return {"deleted": True}
+                    try:
+                        payload = await response.json(content_type=None)
+                    except Exception:
+                        payload = {"raw": await response.text()}
+                    if response.status == 404:
+                        raise RuntimeError("Message not found (already deleted or older than 6 hours)")
+                    if response.status == 403:
+                        raise RuntimeError(
+                            "Twitch rejected the delete; the token needs the "
+                            "moderator:manage:chat_messages scope (re-authorize Twitch)"
+                        )
+                    if response.status == 401 and attempt == 0:
+                        token = self._load_access_token()
+                        continue
+                    raise RuntimeError(f"Twitch delete failed {response.status}: {payload}")
+        raise RuntimeError("Unable to delete Twitch message")
 
     async def run(self) -> None:
         if not self._configured():
