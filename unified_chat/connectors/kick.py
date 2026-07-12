@@ -8,7 +8,7 @@ import re
 import secrets
 from datetime import timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
 from cryptography.exceptions import InvalidSignature
@@ -168,7 +168,9 @@ class KickConnector(BaseConnector):
                 "code_verifier": code_verifier,
             }
         )
-        return f"{self.OAUTH_BASE_URL}/oauth/authorize?{urlencode(params)}"
+        # Kick's OAuth server expects %20 between scopes, not the + that
+        # urlencode's default quote_plus produces.
+        return f"{self.OAUTH_BASE_URL}/oauth/authorize?{urlencode(params, quote_via=quote)}"
 
     async def complete_authorization(self, code: str | None, state: str | None) -> None:
         if not self._configured():
@@ -397,6 +399,7 @@ class KickConnector(BaseConnector):
             platform="kick",
             platform_message_id=message_id,
             channel_id=str(broadcaster.get("user_id") or self.settings.kick_broadcaster_user_id or ""),
+            author_id=str(sender.get("user_id") or "") or None,
             author_display_name=str(sender.get("username") or sender.get("channel_slug") or "Unknown"),
             author_login=sender.get("channel_slug") or sender.get("username"),
             author_color=identity.get("username_color"),
@@ -552,6 +555,92 @@ class KickConnector(BaseConnector):
                 last_error=None,
             )
         return unified
+
+    async def ban_user(
+        self,
+        user_id: str,
+        *,
+        duration: int | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        target = str(user_id or "").strip()
+        if not target:
+            raise ValueError("user_id is required")
+        if not target.isdigit():
+            raise ValueError("user_id must be a numeric Kick user id")
+        broadcaster_id = str(self.settings.kick_broadcaster_user_id or "").strip()
+        if not broadcaster_id:
+            raise ValueError("KICK_BROADCASTER_USER_ID is required for Kick moderation")
+        if target == broadcaster_id:
+            raise ValueError("Cannot ban the broadcaster")
+        # The API takes minutes (1..10080); the endpoint contract is seconds like Twitch.
+        if duration is not None and not 60 <= duration <= 604800:
+            raise ValueError("duration must be between 60 and 604800 seconds")
+
+        token = await self._get_user_token()
+        if not token:
+            raise RuntimeError("Kick authorization required; visit /auth/kick/start")
+
+        body: dict[str, Any] = {
+            "broadcaster_user_id": int(broadcaster_id),
+            "user_id": int(target),
+        }
+        if duration is not None:
+            body["duration"] = duration // 60
+        if reason:
+            body["reason"] = str(reason)[:100]
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            async with session.post(
+                f"{self.API_BASE_URL}/moderation/bans", headers=headers, json=body
+            ) as response:
+                try:
+                    payload = await response.json(content_type=None)
+                except Exception:
+                    payload = {"raw": await response.text()}
+                if response.status < 400:
+                    return payload
+                if response.status in (401, 403):
+                    raise RuntimeError(
+                        "Kick rejected the moderation request; re-authorize via /auth/kick/start "
+                        "so the token gets the moderation:ban scope"
+                    )
+                raise RuntimeError(f"Kick ban failed {response.status}: {payload}")
+
+    async def delete_message(self, message_id: str) -> dict[str, Any]:
+        target = str(message_id or "").strip()
+        if not target:
+            raise ValueError("message_id is required")
+
+        token = await self._get_user_token()
+        if not token:
+            raise RuntimeError("Kick authorization required; visit /auth/kick/start")
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            async with session.delete(
+                f"{self.API_BASE_URL}/chat/{quote(target, safe='')}", headers=headers
+            ) as response:
+                try:
+                    payload = await response.json(content_type=None)
+                except Exception:
+                    payload = {"raw": await response.text()}
+                if response.status < 400:
+                    return payload
+                if response.status in (401, 403):
+                    raise RuntimeError(
+                        "Kick rejected the delete; re-authorize via /auth/kick/start "
+                        "so the token gets the moderation:chat_message:manage scope"
+                    )
+                raise RuntimeError(f"Kick delete failed {response.status}: {payload}")
 
     async def run(self) -> None:
         if not self._configured():
