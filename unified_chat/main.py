@@ -16,9 +16,10 @@ from werkzeug.security import check_password_hash
 
 from unified_chat.config import Settings, load_settings
 from unified_chat.connectors import KickConnector, TwitchConnector, YouTubeConnector
-from unified_chat.models import ModerationRequest, ReplyRequest
+from unified_chat.models import DeleteMessageRequest, ModerationRequest, ReplyRequest
 from unified_chat.service import ChatService
 from unified_chat.store import MessageStore
+from unified_chat.utils import utcnow
 
 log = logging.getLogger("unified_chat.main")
 
@@ -307,7 +308,7 @@ async def reply_twitch(payload: ReplyRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "platform": "twitch", "result": result}
 
 
@@ -320,7 +321,7 @@ async def mod_twitch_ban(payload: ModerationRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "platform": "twitch", "result": result}
 
 
@@ -339,8 +340,67 @@ async def mod_twitch_timeout(payload: ModerationRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "platform": "twitch", "result": result}
+
+
+@app.post("/api/mod/kick/ban")
+async def mod_kick_ban(payload: ModerationRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    try:
+        result = await runtime.kick.ban_user(payload.user_id, reason=payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "platform": "kick", "result": result}
+
+
+@app.post("/api/mod/kick/timeout")
+async def mod_kick_timeout(payload: ModerationRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    if payload.duration is None:
+        raise HTTPException(status_code=400, detail="duration is required for timeouts")
+    try:
+        result = await runtime.kick.ban_user(
+            payload.user_id,
+            duration=payload.duration,
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "platform": "kick", "result": result}
+
+
+async def _delete_platform_message(platform: str, connector, service, message_id: str) -> dict:
+    try:
+        result = await connector.delete_message(message_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # Strike the message through for all clients right away instead of waiting
+    # for the platform's delete event (Kick has none; Twitch's dedupes on top).
+    await service.mark_message_deleted(platform, message_id, utcnow())
+    return {"ok": True, "platform": platform, "result": result}
+
+
+@app.post("/api/mod/twitch/delete-message")
+async def mod_twitch_delete_message(payload: DeleteMessageRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    return await _delete_platform_message("twitch", runtime.twitch, runtime.service, payload.message_id)
+
+
+@app.post("/api/mod/kick/delete-message")
+async def mod_kick_delete_message(payload: DeleteMessageRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    return await _delete_platform_message("kick", runtime.kick, runtime.service, payload.message_id)
 
 
 @app.websocket("/ws/chat")
