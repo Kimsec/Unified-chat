@@ -237,11 +237,11 @@ function renderMessages() {
       `;
     }
 
-    const canModerate = message.platform === "twitch"
+    const canModerate = (message.platform === "twitch" || message.platform === "kick")
       && message.author_id
       && message.author_id !== message.channel_id;
     const modAttrs = canModerate
-      ? ` data-mod-user-id="${escapeHtml(message.author_id)}" data-mod-user-name="${escapeHtml(message.author_display_name)}"`
+      ? ` data-mod-user-id="${escapeHtml(message.author_id)}" data-mod-user-name="${escapeHtml(message.author_display_name)}" data-mod-platform="${message.platform}" data-mod-message-id="${escapeHtml(message.platform_message_id || "")}"`
       : "";
 
     return `
@@ -640,7 +640,7 @@ replyFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-// Twitch mod actions panel (broadcaster-only feature; no visual affordance on names)
+// Twitch/Kick mod actions panel (broadcaster-only feature; no visual affordance on names)
 const MOD_CONFIRM_MS = 4000;
 const MOD_TIMEOUT_OPTIONS = [
   { label: "5 min", duration: 300 },
@@ -650,6 +650,8 @@ const MOD_TIMEOUT_OPTIONS = [
 const modPanelState = {
   el: null,
   userId: null,
+  platform: null,
+  messageId: null,
   anchorRect: null,
   confirmTimer: null,
   busy: false,
@@ -673,14 +675,20 @@ function openModPanel(nameEl) {
   const panel = ensureModPanel();
   resetModConfirm();
   modPanelState.userId = nameEl.dataset.modUserId;
+  modPanelState.platform = nameEl.dataset.modPlatform || "twitch";
+  modPanelState.messageId = nameEl.dataset.modMessageId || null;
   modPanelState.anchorRect = nameEl.getBoundingClientRect();
   modPanelState.busy = false;
   const durationButtons = MOD_TIMEOUT_OPTIONS.map((option) =>
     `<button type="button" class="mod-panel-button" data-action="timeout" data-duration="${option.duration}" data-label="${option.label}">${option.label}</button>`
   ).join("");
+  const deleteButton = modPanelState.messageId
+    ? `<button type="button" class="mod-panel-button" data-action="delete" data-label="Delete msg">Delete msg</button>`
+    : "";
   panel.innerHTML = `
     <div class="mod-panel-user">${escapeHtml(nameEl.dataset.modUserName || "")}</div>
     <div class="mod-panel-actions">
+      ${deleteButton}
       <button type="button" class="mod-panel-button mod-ban" data-action="ban" data-label="Ban">Ban</button>
       <button type="button" class="mod-panel-button" data-action="timeout-toggle" data-label="Timeout">Timeout</button>
     </div>
@@ -712,6 +720,8 @@ function closeModPanel() {
   resetModConfirm();
   modPanelState.el.classList.add("hidden");
   modPanelState.userId = null;
+  modPanelState.platform = null;
+  modPanelState.messageId = null;
   modPanelState.anchorRect = null;
   modPanelState.busy = false;
 }
@@ -749,10 +759,10 @@ function handleModPanelClick(event) {
 
   resetModConfirm();
   const duration = button.dataset.duration ? Number(button.dataset.duration) : null;
-  sendModAction(duration);
+  sendModAction(button.dataset.action, duration);
 }
 
-async function sendModAction(duration) {
+async function sendModAction(action, duration) {
   const panel = modPanelState.el;
   const statusEl = panel.querySelector(".mod-panel-status");
   modPanelState.busy = true;
@@ -762,9 +772,15 @@ async function sendModAction(duration) {
   statusEl.classList.remove("error");
   statusEl.textContent = "Sending...";
 
-  const endpoint = duration ? "/api/mod/twitch/timeout" : "/api/mod/twitch/ban";
-  const body = { user_id: modPanelState.userId };
-  if (duration) body.duration = duration;
+  const platform = modPanelState.platform || "twitch";
+  const isDelete = action === "delete";
+  const endpoint = isDelete
+    ? `/api/mod/${platform}/delete-message`
+    : duration ? `/api/mod/${platform}/timeout` : `/api/mod/${platform}/ban`;
+  const body = isDelete
+    ? { message_id: modPanelState.messageId }
+    : { user_id: modPanelState.userId };
+  if (!isDelete && duration) body.duration = duration;
 
   try {
     const response = await fetch(endpoint, {
@@ -776,12 +792,19 @@ async function sendModAction(duration) {
       window.location.href = "/login";
       return;
     }
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail || "Moderation request failed");
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_) {
+      payload = null;
     }
-    if (payload.result?.already_banned) {
+    if (!response.ok) {
+      throw new Error(payload?.detail || `Moderation request failed (${response.status})`);
+    }
+    if (payload?.result?.already_banned) {
       statusEl.textContent = "Already banned";
+    } else if (isDelete) {
+      statusEl.textContent = "Deleted";
     } else {
       statusEl.textContent = duration ? `Timed out ${Math.round(duration / 60)} min` : "Banned";
     }
@@ -801,7 +824,11 @@ document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : null;
   const nameEl = target?.closest(".author-name[data-mod-user-id]");
   if (nameEl) {
-    if (isModPanelOpen() && modPanelState.userId === nameEl.dataset.modUserId) {
+    if (
+      isModPanelOpen()
+      && modPanelState.userId === nameEl.dataset.modUserId
+      && modPanelState.messageId === (nameEl.dataset.modMessageId || null)
+    ) {
       closeModPanel();
     } else {
       openModPanel(nameEl);
