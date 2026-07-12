@@ -33,16 +33,20 @@
                     <h2>Filter</h2>
                 </div>
                 <div class="filter-row">
-                    <button class="filter-button active" data-platform="twitch" type="button">Twitch</button>
-                    <button class="filter-button active" data-platform="youtube" type="button">YouTube</button>
-                    <button class="filter-button active" data-platform="kick" type="button">Kick</button>
+                    <button class="filter-button active" data-platform="twitch" type="button"><span class="chip-dot"></span>Twitch</button>
+                    <button class="filter-button active" data-platform="youtube" type="button"><span class="chip-dot"></span>YouTube</button>
+                    <button class="filter-button active" data-platform="kick" type="button"><span class="chip-dot"></span>Kick</button>
                 </div>
                 <div class="panel-header">
                     <h2>Settings</h2>
                 </div>
-                <div class="filter-row">
-                    <button id="clear-messages" class="filter-button clear-button" type="button">Clear chat</button>
-                    <button id="toggle-platform-names" class="filter-button active" type="button">Platform</button>
+                <div class="settings-rows">
+                    <div class="settings-row">
+                        <span class="settings-label">Platform</span>
+                        <button id="toggle-platform-names" class="switch active" type="button"
+                            title="Show platform icon in messages"></button>
+                    </div>
+                    <button id="clear-messages" class="settings-action" type="button">Clear chat</button>
                 </div>
             </section>
 
@@ -57,7 +61,8 @@
             <section class="panel feed-panel">
                 <div class="panel-header">
                     <h2>Unified Feed</h2>
-                    <button id="popout-chat" class="ghost-button small-button" type="button" title="Pop out chat">⧉</button>
+                    <button id="popout-chat" class="ghost-button small-button" type="button"
+                        title="Open the chat in its own window">⧉ Popout</button>
                 </div>
                 <div id="hype-train-bar" class="hype-train-bar hidden" role="status" aria-live="polite" aria-hidden="true">
                     <div class="hype-train-info">
