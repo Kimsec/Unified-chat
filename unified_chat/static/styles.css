@@ -110,21 +110,38 @@ h2 {
 .layout-grid {
     display: grid;
     grid-template-columns: 320px minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
+    grid-template-rows: minmax(0, 1fr);
     gap: 20px;
-    align-items: start;
     flex: 1;
     min-height: 0;
 }
 
-.controls-panel {
+/* The side column scrolls on its own so the app always fits the viewport,
+   no matter how short the window is. */
+.side-column {
     grid-column: 1;
     grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 149, 184, 0.35) transparent;
+    padding-right: 4px;
 }
 
-.status-panel {
-    grid-column: 1;
-    grid-row: 2;
+.side-column::-webkit-scrollbar {
+    width: 6px;
+}
+
+.side-column::-webkit-scrollbar-thumb {
+    background: rgba(124, 149, 184, 0.35);
+    border-radius: 3px;
+}
+
+.side-column > .panel {
+    flex-shrink: 0;
 }
 
 .panel {
@@ -219,6 +236,62 @@ h2 {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
+}
+
+.about-panel {
+    padding: 12px 16px;
+    display: grid;
+    gap: 10px;
+}
+
+.about-links {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.about-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    font-size: 0.85rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--muted);
+    text-decoration: none;
+    transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.about-link svg {
+    height: 13px;
+    width: auto;
+}
+
+.about-link:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text);
+}
+
+.about-link.donate {
+    border-color: rgba(255, 209, 102, 0.3);
+    color: #ffd166;
+}
+
+.about-link.donate:hover {
+    background: rgba(255, 209, 102, 0.1);
+    color: #ffe199;
+}
+
+.about-credit {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+
+.about-credit .heart {
+    color: #ff5c8a;
 }
 
 .ghost-button,
@@ -318,6 +391,18 @@ h2 {
     color: var(--text);
 }
 
+.font-size-value {
+    color: var(--muted);
+    font-size: 0.76rem;
+    margin-left: 4px;
+}
+
+.font-slider {
+    width: 92px;
+    accent-color: var(--ok);
+    cursor: pointer;
+}
+
 .switch {
     position: relative;
     width: 36px;
@@ -351,6 +436,170 @@ h2 {
 .switch.active::after {
     transform: translateX(16px);
     background: var(--ok);
+}
+
+/* --- Alert sounds --- */
+
+.alerts-edit {
+    min-width: 30px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 160ms ease;
+}
+
+.alerts-edit:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.alerts-editor {
+    display: grid;
+    gap: 8px;
+    padding: 2px 0 4px;
+}
+
+.alerts-editor.hidden {
+    display: none;
+}
+
+.alerts-rows {
+    display: grid;
+    gap: 6px;
+}
+
+.alerts-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.alerts-input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+}
+
+.alerts-input.invalid {
+    border-color: rgba(255, 123, 123, 0.75);
+}
+
+.alerts-remove {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 7px;
+    background: rgba(255, 59, 48, 0.18);
+    color: #ff7b7b;
+    font-size: 0.72rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 160ms ease, transform 160ms ease;
+}
+
+.alerts-remove:hover {
+    background: rgba(255, 59, 48, 0.4);
+    transform: scale(1.12);
+}
+
+.alerts-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.alerts-add-row {
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: color 160ms ease, background 160ms ease;
+}
+
+.alerts-add-row:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.alerts-apply {
+    padding: 5px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(115, 240, 168, 0.3);
+    background: transparent;
+    color: var(--ok);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 160ms ease;
+}
+
+.alerts-apply:hover {
+    background: rgba(115, 240, 168, 0.12);
+}
+
+.alerts-hint {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+
+/* In normal flow, so it pushes the content down instead of covering it. */
+.alerts-unlock {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 209, 102, 0.25);
+    background: rgba(255, 209, 102, 0.1);
+    color: var(--warn);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 160ms ease;
+}
+
+.alerts-unlock:hover {
+    background: rgba(255, 209, 102, 0.18);
+}
+
+.alerts-unlock.hidden {
+    display: none;
+}
+
+.alert-frames {
+    position: absolute;
+    top: 0;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+.alert-frames iframe {
+    width: 1px;
+    height: 1px;
+    border: 0;
 }
 
 .settings-action {
@@ -692,6 +941,12 @@ h2 {
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: var(--chat-font, 1rem);
+}
+
+.message-card.mention {
+    background: rgba(255, 92, 138, 0.1);
+    border-color: rgba(255, 92, 138, 0.35);
 }
 
 .message-card:last-child {
@@ -791,6 +1046,14 @@ h2 {
     margin-right: 4px;
 }
 
+.badge {
+    height: 16px;
+    width: 16px;
+    border-radius: 3px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
 .source-streamer-avatar {
     height: 22px;
     width: 22px;
@@ -809,7 +1072,7 @@ h2 {
 
 .message-text {
     word-break: break-word;
-    font-size: 0.93rem;
+    font-size: calc(var(--chat-font, 1rem) * 0.93);
 }
 
 .system-notice-text {
@@ -941,12 +1204,23 @@ h2 {
         grid-template-rows: auto;
     }
 
+    /* Panels become grid items so the feed can sit between Settings and Status. */
+    .side-column {
+        display: contents;
+    }
+
     .controls-panel,
     .status-panel,
+    .about-panel,
     .feed-panel {
         grid-column: 1;
         grid-row: auto;
     }
+
+    .controls-panel { order: 1; }
+    .feed-panel { order: 2; }
+    .status-panel { order: 3; }
+    .about-panel { order: 4; }
 
     .feed-panel {
         height: calc(100vh - 80px);
@@ -989,4 +1263,115 @@ h2 {
     .emote-toggle {
         flex-shrink: 0;
     }
+}
+
+/* --- Expand (?expand=1): the main page expands into the popout layout --- */
+
+.header-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+#expand-toggle {
+    gap: 7px;
+}
+
+#expand-toggle svg {
+    height: 12px;
+    width: auto;
+}
+
+html.expand-mode,
+html.expand-mode body {
+    height: 100%;
+    overflow: hidden;
+}
+
+html.expand-mode body {
+    padding: 0;
+}
+
+html.expand-mode .app-shell {
+    max-width: none;
+    height: 100%;
+}
+
+/* Promotes the feed panel to a direct flex child of the app shell. */
+html.expand-mode .layout-grid {
+    display: contents;
+}
+
+html.expand-mode .hero,
+html.expand-mode .side-column,
+html.expand-mode .feed-panel > .panel-header {
+    display: none;
+}
+
+html.expand-mode .feed-panel {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
+}
+
+html.expand-mode .feed {
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: none;
+}
+
+/* Keeps the hype train percentage clear of the floating ✕ button. */
+html.expand-mode .hype-train-bar {
+    padding-right: 48px;
+}
+
+.feed-panel.expand-anim {
+    position: relative;
+    z-index: 50;
+    will-change: transform;
+}
+
+.expand-controls {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 30;
+    display: none;
+    opacity: 0.55;
+    transition: opacity 160ms ease;
+}
+
+.expand-controls:hover {
+    opacity: 1;
+}
+
+html.expand-mode .expand-controls {
+    display: flex;
+}
+
+.expand-exit {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 123, 123, 0.4);
+    background: rgba(30, 40, 60, 0.45);
+    color: var(--danger);
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 160ms ease, background 160ms ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.expand-exit:hover {
+    transform: scale(1.1);
+    background: rgba(255, 59, 48, 0.25);
 }
