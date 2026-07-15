@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import secrets
@@ -16,12 +17,23 @@ from werkzeug.security import check_password_hash
 
 from unified_chat.config import Settings, load_settings
 from unified_chat.connectors import KickConnector, TwitchConnector, YouTubeConnector
+from unified_chat.emotes import fetch_third_party_emotes
 from unified_chat.models import DeleteMessageRequest, ModerationRequest, ReplyRequest
 from unified_chat.service import ChatService
 from unified_chat.store import MessageStore
 from unified_chat.utils import utcnow
 
 log = logging.getLogger("unified_chat.main")
+
+UI_SETTING_DEFAULTS = {
+    "showPlatform": True,
+    "showBadges": True,
+    "showThirdPartyEmotes": True,
+    "highlightMentions": True,
+    "use24hClock": True,
+    "chatFontPx": 16,
+    "alertUrls": [],
+}
 
 
 class Runtime:
@@ -35,15 +47,43 @@ class Runtime:
         self.connectors = [self.twitch, self.youtube, self.kick]
         self._next_hype_train_backfill_at = 0.0
         self._hype_train_backfill_ttl_sec = 15.0
+        self.third_party_emotes: dict[str, str] = {}
+        self._emotes_task: asyncio.Task | None = None
+        self._next_emotes_refresh_at = 0.0
+        self._emotes_refresh_ttl_sec = 3600.0
 
     async def start(self) -> None:
         for connector in self.connectors:
             await connector.start()
+        self.maybe_refresh_emotes()
 
     async def stop(self) -> None:
+        if self._emotes_task and not self._emotes_task.done():
+            self._emotes_task.cancel()
         for connector in reversed(self.connectors):
             await connector.stop()
         self.store.close()
+
+    def maybe_refresh_emotes(self) -> None:
+        if not self.settings.twitch_broadcaster_id:
+            return
+        if self._emotes_task and not self._emotes_task.done():
+            return
+        now = time.monotonic()
+        if now < self._next_emotes_refresh_at:
+            return
+        self._next_emotes_refresh_at = now + self._emotes_refresh_ttl_sec
+        self._emotes_task = asyncio.create_task(self._refresh_emotes())
+
+    async def _refresh_emotes(self) -> None:
+        try:
+            emotes = await fetch_third_party_emotes(self.settings.twitch_broadcaster_id)
+        except Exception as exc:
+            log.warning("Third-party emote refresh failed: %s", exc)
+            return
+        if emotes and emotes != self.third_party_emotes:
+            self.third_party_emotes = emotes
+            await self.service.hub.broadcast({"type": "third_party_emotes", "emotes": emotes})
 
     async def maybe_backfill_hype_train(self) -> None:
         if self.service.get_hype_train() is not None:
@@ -63,9 +103,17 @@ class Runtime:
         if hype_train is not None:
             self.service.set_hype_train(hype_train)
 
+    async def get_ui_settings(self) -> dict:
+        stored = await asyncio.to_thread(self.store.get_ui_settings)
+        return {key: stored.get(key, default) for key, default in UI_SETTING_DEFAULTS.items()}
+
     async def build_bootstrap(self, limit: int = 200) -> dict:
         await self.maybe_backfill_hype_train()
-        return await self.service.bootstrap_event(limit)
+        self.maybe_refresh_emotes()
+        payload = await self.service.bootstrap_event(limit)
+        payload["third_party_emotes"] = self.third_party_emotes
+        payload["settings"] = await self.get_ui_settings()
+        return payload
 
 
 settings = load_settings()
@@ -254,13 +302,11 @@ async def popout(request: Request):
     auth_response = require_browser_auth(request)
     if auth_response is not None:
         return auth_response
-    platform_names_param = request.query_params.get("platform_names")
     response = templates.TemplateResponse(
         request=request,
         name="popout.html",
         context={
             "app_base_url": settings.app_base_url,
-            "platform_names_override": platform_names_param,
         },
     )
     apply_popout_embed_headers(response)
@@ -297,6 +343,29 @@ async def get_emotes(request: Request):
     runtime = get_runtime(request)
     emotes = await runtime.twitch.get_emotes()
     return {"emotes": emotes}
+
+
+@app.post("/api/settings")
+async def update_settings(payload: dict[str, bool | int | list[str]], request: Request):
+    require_json_auth(request)
+    unknown = set(payload) - set(UI_SETTING_DEFAULTS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown settings: {', '.join(sorted(unknown))}")
+    for key, value in payload.items():
+        if type(value) is not type(UI_SETTING_DEFAULTS[key]):
+            raise HTTPException(status_code=400, detail=f"Invalid value for {key}")
+        if key == "alertUrls" and (
+            len(value) > 10 or not all(u.startswith("https://") and len(u) <= 500 for u in value)
+        ):
+            raise HTTPException(status_code=400, detail="Invalid value for alertUrls")
+    runtime = get_runtime(request)
+    for key, value in payload.items():
+        if key == "chatFontPx":
+            value = max(12, min(value, 24))
+        await asyncio.to_thread(runtime.store.set_ui_setting, key, value)
+    ui_settings = await runtime.get_ui_settings()
+    await runtime.service.hub.broadcast({"type": "settings", "settings": ui_settings})
+    return {"ok": True, "settings": ui_settings}
 
 
 @app.post("/api/reply/twitch")
