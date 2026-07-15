@@ -32,8 +32,10 @@
         }
     </style>
 </head>
-<body>
+<body data-mode="popout">
     <div class="app-shell">
+        <button id="alerts-unlock" class="alerts-unlock hidden" type="button"
+            title="Browsers block sound until you interact with the page">&#128266; Enable alert sound</button>
         <section class="panel feed-panel">
             <div id="hype-train-bar" class="hype-train-bar hidden" role="status" aria-live="polite" aria-hidden="true">
                 <div class="hype-train-info">
@@ -60,12 +62,12 @@
             </form>
             <p id="reply-status" class="reply-status"></p>
         </section>
+        <div id="alert-frames" class="alert-frames" aria-hidden="true"></div>
     </div>
 
     <script>
         window.UNIFIED_CHAT_CONFIG = {
-            appBaseUrl: {{ app_base_url | tojson }},
-            platformNamesOverride: {{ platform_names_override | tojson }}
+            appBaseUrl: {{ app_base_url | tojson }}
         };
     </script>
     <script src="{{ url_for('static', path='app.js') }}?v={{ asset_version }}" defer></script>
