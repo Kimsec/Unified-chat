@@ -1,566 +1,1007 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unified Chat — Preview</title>
-<style>
-:root {
-    --bg: #09111f;
-    --bg-strong: #050910;
-    --panel: rgba(11, 19, 35, 0.88);
-    --panel-border: rgba(124, 149, 184, 0.18);
-    --text: #eef4ff;
-    --muted: #94a7c4;
-    --twitch: #9146ff;
-    --youtube: #ff3b30;
-    --kick: #53fc18;
-    --shadow: 0 30px 70px rgba(0, 0, 0, 0.35);
-}
-* { box-sizing: border-box; }
-html, body {
-    margin: 0;
-    height: 100%;
-    background:
-        radial-gradient(circle at top left, rgba(145, 70, 255, 0.18), transparent 30%),
-        radial-gradient(circle at top right, rgba(83, 252, 24, 0.12), transparent 26%),
-        linear-gradient(160deg, #09111f 0%, #050910 65%, #020408 100%);
-    color: var(--text);
-    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-}
-body {
-    display: flex;
-    gap: 24px;
-    padding: 24px;
-    height: 100vh;
-    overflow: hidden;
-}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Unified Chat — Live Demo</title>
+    <link rel="icon" href="favicon.ico">
+    <link rel="stylesheet" href="styles.css">
+    <script>
+        if ((new URLSearchParams(location.search).get("expand") ?? "0") !== "0") document.documentElement.classList.add("expand-mode");
+    </script>
+    <style>
+        .demo-tag {
+            font-size: 0.55em;
+            font-weight: 600;
+            color: var(--kick);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            align-self: flex-end;
+            padding-bottom: 2px;
+        }
 
-/* === Chat panel (mimics popout) === */
-.chat-shell {
-    width: 460px;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-.panel {
-    border: 1px solid var(--panel-border);
-    border-radius: 24px;
-    background: var(--panel);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(16px);
-}
-.feed-panel {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-.panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    padding: 14px 16px 8px;
-}
-.panel-header h2 {
-    margin: 0;
-    font-size: 1.15rem;
-}
+        .demo-toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            z-index: 200;
+            max-width: min(90vw, 480px);
+            padding: 12px 18px;
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            background: var(--panel);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+            font-size: 0.9rem;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 260ms ease, opacity 260ms ease;
+        }
 
-/* === Hype train bar === */
-.hype-train-bar {
-    flex-shrink: 0;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--panel-border);
-    background: rgba(145, 70, 255, 0.08);
-    max-height: 60px;
-    opacity: 1;
-    overflow: hidden;
-    transition: opacity 500ms ease, max-height 500ms ease, padding 500ms ease;
-}
-.hype-train-bar.hidden {
-    max-height: 0;
-    opacity: 0;
-    padding: 0 14px;
-    border-bottom: none;
-    pointer-events: none;
-}
-.hype-train-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-    margin-bottom: 5px;
-}
-.hype-train-label {
-    font-weight: 700;
-    color: var(--text);
-}
-#ht-progress-text {
-    color: var(--muted);
-}
-.hype-train-track {
-    height: 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.08);
-    overflow: hidden;
-}
-.hype-train-fill {
-    height: 100%;
-    width: 0%;
-    border-radius: 3px;
-    background: linear-gradient(90deg, #9146ff, #ffd700);
-    transition: width 400ms ease;
-}
-
-/* === Feed === */
-.feed-wrapper {
-    position: relative;
-    flex: 1 1 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-.feed {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px 12px 12px;
-    flex: 1 1 0;
-    min-height: 0;
-    overflow-y: auto;
-}
-.message-card {
-    padding: 6px 12px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.message-card:last-child {
-    animation: fade-in 220ms ease;
-}
-@keyframes fade-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-.message-topline {
-    display: inline;
-    line-height: 1.4;
-}
-.message-time {
-    color: var(--muted);
-    font-size: 0.82rem;
-    margin-right: 4px;
-}
-.platform-pill {
-    display: inline-flex;
-    align-items: center;
-    vertical-align: middle;
-    gap: 4px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    font-size: 0.82rem;
-    color: #fff;
-    margin-right: 2px;
-}
-.platform-pill svg, .platform-pill img {
-    width: 16px; height: 16px; display: block;
-}
-.platform-pill.twitch { background: rgba(145, 70, 255, 0.18); }
-.platform-pill.youtube { background: rgba(255, 59, 48, 0.18); }
-.platform-pill.kick { background: rgba(83, 252, 24, 0.18); color: #d7ffd0; }
-.author-name { font-weight: 700; white-space: nowrap; }
-.message-text { word-break: break-word; font-size: 0.93rem; }
-.message-card.system-notice {
-    background: rgba(145, 70, 255, 0.06);
-    border-color: rgba(145, 70, 255, 0.12);
-}
-@property --twitch-rainbow-angle {
-    syntax: '<angle>';
-    initial-value: 0deg;
-    inherits: false;
-}
-.message-card.system-notice[data-platform="twitch"] {
-    border: 2px solid transparent;
-    background:
-        linear-gradient(rgba(145, 70, 255, 0.08), rgba(145, 70, 255, 0.08)) padding-box,
-        linear-gradient(#0d1626, #0d1626) padding-box,
-        conic-gradient(
-            from var(--twitch-rainbow-angle),
-            rgba(255, 59, 59, 0.8), rgba(255, 177, 59, 0.8), rgba(245, 238, 58, 0.8), rgba(76, 217, 100, 0.8),
-            rgba(52, 192, 255, 0.8), rgba(106, 92, 255, 0.8), rgba(255, 92, 209, 0.8), rgba(255, 59, 59, 0.8)
-        ) border-box;
-    animation: twitch-rainbow-spin 6s linear infinite;
-}
-@keyframes twitch-rainbow-spin {
-    to { --twitch-rainbow-angle: 360deg; }
-}
-.system-notice-text { color: #fff; }
-
-/* === Reply form === */
-.reply-form-inline {
-    display: flex;
-    gap: 8px;
-    padding: 10px 12px 12px;
-    border-top: 1px solid var(--panel-border);
-    flex-shrink: 0;
-}
-.reply-input {
-    flex: 1;
-    min-width: 0;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(4, 8, 15, 0.72);
-    color: var(--text);
-    padding: 8px 12px;
-    font: inherit;
-    font-size: 0.93rem;
-}
-.emote-toggle {
-    background: none;
-    border: none;
-    font-size: 1.3rem;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 50%;
-    line-height: 1;
-    flex-shrink: 0;
-}
-.primary-button {
-    cursor: pointer;
-    border: 0;
-    border-radius: 999px;
-    padding: 8px 18px;
-    color: #03070d;
-    background: linear-gradient(135deg, #d5ff7e, #73f0a8);
-    font-weight: 700;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-/* === Control panel === */
-.controls {
-    width: 320px;
-    padding: 24px;
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 24px;
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(16px);
-    overflow-y: auto;
-}
-.controls h2 {
-    margin: 0 0 16px;
-    font-size: 1.1rem;
-}
-.controls h3 {
-    margin: 18px 0 8px;
-    font-size: 0.85rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-}
-.controls button {
-    width: 100%;
-    padding: 10px 14px;
-    margin-bottom: 8px;
-    border-radius: 10px;
-    border: 1px solid var(--panel-border);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text);
-    font: inherit;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background 160ms ease;
-}
-.controls button:hover {
-    background: rgba(255, 255, 255, 0.12);
-}
-.controls .accent {
-    background: rgba(145, 70, 255, 0.2);
-    border-color: rgba(145, 70, 255, 0.4);
-}
-.controls .accent:hover {
-    background: rgba(145, 70, 255, 0.3);
-}
-.controls input[type="range"] {
-    width: 100%;
-    margin: 6px 0 12px;
-}
-.controls .row {
-    display: flex;
-    gap: 8px;
-}
-.controls .row button { flex: 1; }
-.note {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin: 12px 0;
-    line-height: 1.4;
-}
-</style>
+        .demo-toast.visible {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+    </style>
 </head>
 <body>
-
-<div class="chat-shell">
-    <section class="panel feed-panel">
-        <div class="panel-header">
-            <h2>Unified Feed</h2>
-        </div>
-        <div id="hype-train-bar" class="hype-train-bar hidden">
-            <div class="hype-train-info">
-                <span class="hype-train-label">Hype Train Lvl <span id="ht-level">1</span></span>
-                <span id="ht-progress-text"></span>
+    <div class="app-shell">
+        <header class="hero">
+            <div>
+                <h1><img src="favicon.ico" class="header-logo" alt="">Unified Chat <span class="demo-tag">Live demo</span></h1>
             </div>
-            <div class="hype-train-track">
-                <div id="ht-fill" class="hype-train-fill"></div>
+            <div class="hero-actions">
+                <button class="ghost-button" type="button" onclick="demoToast()">Connect Twitch</button>
+                <button class="ghost-button" type="button" onclick="demoToast()">Connect YouTube</button>
+                <button class="ghost-button" type="button" onclick="demoToast()">Connect Kick</button>
+                <a class="ghost-button" href="https://github.com/Kimsec/unified-chat" target="_blank" rel="noopener">Get it on GitHub</a>
             </div>
+        </header>
+
+        <main class="layout-grid">
+            <div class="side-column">
+            <section class="panel controls-panel">
+                <div class="panel-header">
+                    <h2>Filter</h2>
+                </div>
+                <div class="filter-row">
+                    <button class="filter-button active" data-platform="twitch" type="button"><span class="chip-dot"></span>Twitch</button>
+                    <button class="filter-button active" data-platform="youtube" type="button"><span class="chip-dot"></span>YouTube</button>
+                    <button class="filter-button active" data-platform="kick" type="button"><span class="chip-dot"></span>Kick</button>
+                </div>
+                <div class="panel-header">
+                    <h2>Settings</h2>
+                </div>
+                <div class="settings-rows">
+                    <div class="settings-row">
+                        <span class="settings-label">Platform</span>
+                        <button id="toggle-platform" class="switch" type="button"
+                            title="Show platform icon in messages"></button>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">User badges</span>
+                        <button id="toggle-badges" class="switch" type="button"
+                            title="Show user badges (mod, sub, VIP...) in messages"></button>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">7TV/BTTV/FFZ emotes</span>
+                        <button id="toggle-emotes" class="switch" type="button"
+                            title="Show 7TV / BTTV / FFZ emotes in Twitch messages"></button>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Highlight mentions</span>
+                        <button id="toggle-mentions" class="switch" type="button"
+                            title="Highlight messages that @-mention you"></button>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">24-hour clock</span>
+                        <button id="toggle-clock" class="switch" type="button"
+                            title="Use 24-hour time format"></button>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Text size <span id="font-size-value"
+                                class="font-size-value">16px</span></span>
+                        <input id="font-size" class="font-slider" type="range" min="12" max="24" step="1" value="16"
+                            title="Chat text size">
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Alert sounds</span>
+                        <button id="alerts-edit" class="alerts-edit" type="button"
+                            title="Add alert sound overlays (StreamElements etc.)">+ Add</button>
+                    </div>
+                    <div id="alerts-editor" class="alerts-editor hidden">
+                        <div id="alerts-rows" class="alerts-rows"></div>
+                        <div class="alerts-actions">
+                            <button id="alerts-add-row" class="alerts-add-row" type="button">+ Add another</button>
+                            <button id="alerts-apply" class="alerts-apply" type="button">Apply</button>
+                        </div>
+                        <p class="alerts-hint">Alert overlay URLs (StreamElements etc.) play their sound in the
+                            popout and expanded chat.</p>
+                    </div>
+                    <button id="clear-messages" class="settings-action" type="button">Clear chat</button>
+                </div>
+            </section>
+
+            <section class="panel status-panel">
+                <div class="panel-header">
+                    <h2>Connector Status</h2>
+                    <button id="refresh-status" class="ghost-button small-button" type="button">Refresh</button>
+                </div>
+                <div id="status-grid" class="status-grid"></div>
+            </section>
+
+            <section class="panel about-panel">
+                <div class="about-links">
+                    <a class="about-link" href="mailto:kim3k@live.no" title="Contact me">
+                        <svg viewBox="0 0 512 512" aria-hidden="true"><path fill="currentColor" d="M464 64C490.5 64 512 85.5 512 112C512 127.1 504.9 141.3 492.8 150.4L275.2 313.6C263.8 322.1 248.2 322.1 236.8 313.6L19.2 150.4C7.113 141.3 0 127.1 0 112C0 85.5 21.49 64 48 64H464zM217.6 339.2C240.4 356.3 271.6 356.3 294.4 339.2L512 176V384C512 419.3 483.3 448 448 448H64C28.65 448 0 419.3 0 384V176L217.6 339.2z"/></svg>
+                        Contact
+                    </a>
+                    <a class="about-link" href="https://github.com/Kimsec/unified-chat" target="_blank" rel="noopener" title="GitHub">
+                        <svg viewBox="0 0 496 512" aria-hidden="true"><path fill="currentColor" d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.3 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8z"/></svg>
+                        GitHub
+                    </a>
+                    <a class="about-link donate" href="https://donation.kimsec.net" title="Support the project">
+                        <svg viewBox="0 0 512 512" aria-hidden="true"><path fill="currentColor" d="M47.6 300.4L228.3 469.1c7.5 7 17.4 10.9 27.7 10.9s20.2-3.9 27.7-10.9L464.4 300.4c30.4-28.3 47.6-68 47.6-109.5v-5.8c0-69.9-50.5-129.5-119.4-141C347 36.5 300.6 51.4 268 84L256 96 244 84c-32.6-32.6-79-47.5-124.6-39.9C50.5 55.6 0 115.2 0 185.1v5.8c0 41.5 17.2 81.2 47.6 109.5z"/></svg>
+                        Donate
+                    </a>
+                </div>
+                <p class="about-credit">Made with <span class="heart">❤</span> by Kim AH</p>
+            </section>
+            </div>
+
+            <section class="panel feed-panel">
+                <div class="panel-header">
+                    <h2>Unified Feed</h2>
+                    <div class="header-buttons">
+                        <button id="expand-toggle" class="ghost-button small-button" type="button"
+                            title="Expand the chat to fill the window">
+                            <svg viewBox="0 0 448 512" aria-hidden="true"><path fill="currentColor" d="M32 32C14.3 32 0 46.3 0 64v96c0 17.7 14.3 32 32 32s32-14.3 32-32V96h64c17.7 0 32-14.3 32-32s-14.3-32-32-32H32zM64 352c0-17.7-14.3-32-32-32s-32 14.3-32 32v96c0 17.7 14.3 32 32 32h96c17.7 0 32-14.3 32-32s-14.3-32-32-32H64v-64zM320 32c-17.7 0-32 14.3-32 32s14.3 32 32 32h64v64c0 17.7 14.3 32 32 32s32-14.3 32-32V64c0-17.7-14.3-32-32-32h-96zM448 352c0-17.7-14.3-32-32-32s-32 14.3-32 32v64h-64c-17.7 0-32 14.3-32 32s14.3 32 32 32h96c17.7 0 32-14.3 32-32v-96z"/></svg>
+                            Expand</button>
+                        <button id="popout-chat" class="ghost-button small-button" type="button"
+                            title="Open the chat in its own window">⧉ Popout</button>
+                    </div>
+                </div>
+                <div id="hype-train-bar" class="hype-train-bar hidden" role="status" aria-live="polite" aria-hidden="true">
+                    <div class="hype-train-info">
+                        <span class="hype-train-label">Hype Train Lvl <span id="ht-level">1</span></span>
+                        <span id="ht-progress-text"></span>
+                    </div>
+                    <div class="hype-train-track">
+                        <div id="ht-fill" class="hype-train-fill"></div>
+                    </div>
+                </div>
+                <div class="feed-wrapper">
+                    <div id="feed" class="feed" aria-live="polite"></div>
+                    <button id="scroll-bottom" class="scroll-bottom hidden" type="button" title="Scroll to bottom">↓</button>
+                </div>
+                <div id="emote-picker" class="emote-picker hidden">
+                    <input id="emote-search" class="emote-search" type="text" placeholder="Search emotes...">
+                    <div id="emote-grid" class="emote-grid"></div>
+                </div>
+                <form id="reply-form" class="reply-form-inline">
+                    <input id="reply-message" name="message" type="text" maxlength="500"
+                        placeholder="Reply to Twitch..." class="reply-input">
+                    <button id="emote-toggle" class="emote-toggle" type="button" title="Emotes">😊</button>
+                    <button type="submit" class="primary-button">Send</button>
+                </form>
+                <p id="reply-status" class="reply-status"></p>
+            </section>
+        </main>
+        <div class="expand-controls">
+            <button id="expand-exit" class="expand-exit" type="button" title="Collapse the chat (Esc)">✕</button>
         </div>
-        <div class="feed-wrapper">
-            <div id="feed" class="feed"></div>
-        </div>
-        <form class="reply-form-inline" onsubmit="event.preventDefault()">
-            <input class="reply-input" type="text" placeholder="Reply to Twitch...">
-            <button class="emote-toggle" type="button" title="Emotes">😊</button>
-            <button class="primary-button" type="submit">Send</button>
-        </form>
-    </section>
-</div>
-
-<aside class="controls">
-    <h2>Preview Controls</h2>
-    <p class="note">Standalone demo of Unified Chat. Not connected to any backend.</p>
-
-    <h3>Hype Train</h3>
-    <button class="accent" onclick="htBegin()">Start Hype Train</button>
-    <button onclick="htProgress()">+ Progress</button>
-    <button onclick="htLevelUp()">Level Up</button>
-    <button onclick="htEnd()">End Hype Train</button>
-
-    <h3>Chat messages</h3>
-    <button onclick="addRandomMessage()">+ Random message</button>
-    <button onclick="addBurst()">+ Burst (5 messages)</button>
-    <button onclick="clearChat()">Clear chat</button>
-
-    <h3>Twitch system events</h3>
-    <button onclick="addGiftedSub()">+ Gifted Sub</button>
-    <button onclick="addSub()">+ Subscription</button>
-    <button onclick="addBits()">+ Bits / Cheer</button>
-    <button onclick="addRaid()">+ Raid</button>
-
-    <h3>Display mode</h3>
-    <button onclick="togglePlatformNames()">Toggle platform names</button>
-    <p class="note">In stream-control popout embed, only logos are shown — no platform names.</p>
-
-    <h3>Auto demo</h3>
-    <div class="row">
-        <button onclick="startAuto()">Start auto</button>
-        <button onclick="stopAuto()">Stop</button>
     </div>
-</aside>
+
+    <div id="demo-toast" class="demo-toast"></div>
 
 <script>
-// === Platform SVGs ===
+const BROADCASTER = "kimsec";
+const pageParams = new URLSearchParams(window.location.search);
+
 const PLATFORM_SVGS = {
-    twitch: `<svg viewBox="0 0 256 268"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>`,
-    youtube: `<svg viewBox="0 0 576 512"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
-    kick: `<svg viewBox="0 0 16 16"><path fill="#53fc18" d="M3 1h4v5h2V4h2V2h2v4h-2v2h-2v2h2v2h2v4h-2v-2h-2v-2H7v5H3z"/></svg>`,
+  twitch: `<svg viewBox="0 0 256 268" aria-hidden="true"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>`,
+  youtube: `<svg viewBox="0 0 576 512" aria-hidden="true"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
+  kick: `<img src="kick-logo.ico" alt="" aria-hidden="true">`,
 };
 
-const FAKE_USERS = [
-    { name: "musYo", color: "#ff4500", platform: "twitch" },
-    { name: "Caxyhh", color: "#9146ff", platform: "twitch" },
-    { name: "snake989", color: "#1e90ff", platform: "twitch" },
-    { name: "shayshaymonkey", color: "#ff69b4", platform: "twitch" },
-    { name: "john_the_bon", color: "#00ff7f", platform: "twitch" },
-    { name: "Eticer", color: "#ffd700", platform: "twitch" },
-    { name: "TwitchPrime_42", color: "#9146ff", platform: "twitch" },
-    { name: "GameWizard", color: "#ff0000", platform: "youtube" },
-    { name: "StreamFan88", color: "#ff3b30", platform: "youtube" },
-    { name: "YTViewer", color: "#ff6347", platform: "youtube" },
-    { name: "KickKing", color: "#53fc18", platform: "kick" },
-    { name: "GreenGamer", color: "#00ff00", platform: "kick" },
-    { name: "NewToKick", color: "#7fff00", platform: "kick" },
+const TWITCH_BADGE_IDS = {
+  broadcaster: "5527c58c-fb7d-422d-b71b-f309dcb85cc1",
+  moderator: "3267646d-33f0-4b17-b3df-f923a41db1d0",
+  vip: "b817aba4-fad8-49e2-b88a-7cc744dfa6ec",
+  subscriber: "5d9f2208-5dd8-11e7-8513-2ff4adfae661",
+  founder: "511b78a9-ab37-472f-9569-457753bbe7d3",
+  premium: "bbbe0db0-a598-423e-86d0-f9fb98ca1933",
+  "sub-gifter": "f1d8486f-eb2e-4553-b44f-4d614617afc1",
+};
+
+const NATIVE_EMOTES = {
+  Kappa: "25", LUL: "425618", PogChamp: "305954156", HeyGuys: "30259",
+  BibleThump: "86", Kreygasm: "41", DansGame: "33", NotLikeThis: "58765",
+  VoHiYo: "81274", SeemsGood: "64138", "4Head": "354",
+};
+
+let thirdPartyEmotes = new Map();
+let thirdPartyNames = [];
+
+const settings = {
+  showPlatform: true,
+  showBadges: true,
+  showThirdPartyEmotes: true,
+  highlightMentions: true,
+  use24hClock: true,
+  chatFontPx: 16,
+  alertUrls: [],
+};
+
+const state = {
+  messages: [],
+  filters: { twitch: true, youtube: true, kick: true },
+};
+const MAX_VISIBLE_MESSAGES = 200;
+let nextId = 1;
+
+const USERS = [
+  { name: "VildeFisk", color: "#ff69b4", platform: "twitch", badges: ["subscriber"] },
+  { name: "Eticer", color: "#ffd700", platform: "twitch", badges: ["moderator"] },
+  { name: "snake989", color: "#1e90ff", platform: "twitch", badges: [] },
+  { name: "NeonRaptor", color: "#00ff7f", platform: "twitch", badges: ["vip"] },
+  { name: "PixelPia", color: "#fb923c", platform: "twitch", badges: ["subscriber", "premium"] },
+  { name: "Caxyhh", color: "#a78bfa", platform: "twitch", badges: ["sub-gifter"] },
+  { name: "john_the_bon", color: "#34d399", platform: "twitch", badges: [] },
+  { name: "GameWizard", color: "#ff6b6b", platform: "youtube", badges: [] },
+  { name: "LinneaLive", color: "#ffa8a8", platform: "youtube", badges: [] },
+  { name: "StreamFan88", color: "#f87171", platform: "youtube", badges: [] },
+  { name: "KickKing", color: "#53fc18", platform: "kick", badges: [] },
+  { name: "GreenGoblin", color: "#7fff00", platform: "kick", badges: [] },
+  { name: "bobbyp", color: "#a3ff70", platform: "kick", badges: [] },
 ];
 
-const FAKE_MESSAGES = [
-    "Hello everyone!",
-    "GG that was insane",
-    "PogChamp",
-    "First time here, love the stream",
-    "Where can I follow you on socials?",
-    "LUL",
-    "That play was sick!",
-    "Greetings from Norway 🇳🇴",
-    "Hype train incoming!",
-    "Let's gooooo",
-    "Caxyhh is the best",
-    "Can you do a tutorial on this?",
-    "How long have you been streaming?",
-    "This music slaps",
-    "Subbed!",
-    "Tier 3 sub gifted incoming",
-    "What's your setup?",
-    "Big W",
-    "monkaS that was close",
-    "Kappa",
-    "PepeLaugh that play tho",
-    "Why did you do that?? lol",
-    "Stream is fire today",
-    "When's the next stream?",
-    "Insane mechanics",
+const CHAT_TEMPLATES = [
+  "hello everyone {e}",
+  "GG that was insane",
+  "LUL no way",
+  "{7tv}",
+  "{7tv} {7tv} {7tv}",
+  "@kimsec how long have you been streaming?",
+  "greetings from Norway",
+  "that play was sick {e}",
+  "W",
+  "big W {7tv}",
+  "when is the next stream?",
+  "this music slaps",
+  "{e} {e}",
+  "clip it!!",
+  "@kimsec you are cracked",
+  "first time here, loving the stream",
+  "what is your setup?",
+  "insane mechanics Kreygasm",
+  "chat is moving so fast {7tv}",
+  "can you do a tutorial on this?",
+  "Kappa Kappa Kappa",
+  "no shot NotLikeThis",
+  "the site is open source: https://github.com/Kimsec/unified-chat",
+  "actually crying BibleThump",
+  "EZ clap {7tv}",
+  "hi from the kick side",
+  "yo the overlay looks clean",
 ];
 
-// === Utilities ===
-function formatTime(date = new Date()) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-let showPlatformNames = true;
-function platformMarkup(p) {
-    const names = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
-    const label = showPlatformNames ? names[p] : "";
-    return `<span class="platform-pill ${p}">${PLATFORM_SVGS[p]}${label}</span>`;
-}
-function togglePlatformNames() {
-    showPlatformNames = !showPlatformNames;
-    // re-render existing messages
-    const cards = feedEl.querySelectorAll(".message-card");
-    cards.forEach(c => {
-        const pill = c.querySelector(".platform-pill");
-        if (!pill) return;
-        const platform = [...pill.classList].find(x => ["twitch","youtube","kick"].includes(x));
-        if (!platform) return;
-        const names = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
-        pill.innerHTML = PLATFORM_SVGS[platform] + (showPlatformNames ? names[platform] : "");
-    });
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// === Chat ===
+function randomInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+const NOTICES = [
+  () => ({ platform: "twitch", text: `${pick(twitchUsers()).name} subscribed at Tier 1. They've subscribed for ${randomInt(1, 24)} months!` }),
+  () => ({ platform: "twitch", text: `${pick(twitchUsers()).name} is gifting ${pick([1, 5, 10])} Tier 1 Subs to the community!` }),
+  () => ({ platform: "twitch", text: `${pick(twitchUsers()).name} is raiding with a party of ${randomInt(4, 120)}!` }),
+  () => ({ platform: "twitch", text: `${pick(twitchUsers()).name} cheered ${pick([100, 200, 500, 1000])} bits: ${pick(["let's go!", "great stream", "take my bits"])}` }),
+  () => ({ platform: "kick", text: `${pick(kickUsers()).name} subscribed for ${randomInt(1, 12)} months!` }),
+  () => ({ platform: "kick", text: `${pick(kickUsers()).name} sent Hype (${pick([10, 50, 100])} Kicks)!` }),
+  () => ({ platform: "youtube", text: `${pick(ytUsers()).name} sent a Super Chat ($${pick(["2.00", "5.00", "10.00"])}): ${pick(["keep it up!", "for the coffee", "love the content"])}` }),
+  () => ({ platform: "youtube", text: `${pick(ytUsers()).name} became a member!` }),
+];
+
+function twitchUsers() { return USERS.filter((u) => u.platform === "twitch"); }
+function kickUsers() { return USERS.filter((u) => u.platform === "kick"); }
+function ytUsers() { return USERS.filter((u) => u.platform === "youtube"); }
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: !settings.use24hClock });
+}
+
+function emoteImg(url, name) {
+  return `<img class="emote" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
+}
+
+function renderWord(word, allowEmotes) {
+  if (allowEmotes) {
+    const nativeId = NATIVE_EMOTES[word];
+    if (nativeId) return emoteImg(`https://static-cdn.jtvnw.net/emoticons/v2/${nativeId}/default/dark/1.0`, word);
+    if (settings.showThirdPartyEmotes && thirdPartyEmotes.has(word)) return emoteImg(thirdPartyEmotes.get(word), word);
+  }
+  if (/^https?:\/\//.test(word)) {
+    const escaped = escapeHtml(word);
+    return `<a href="${escaped}" target="_blank" rel="noopener noreferrer" class="message-link">${escaped}</a>`;
+  }
+  return escapeHtml(word);
+}
+
+function renderMessageText(message) {
+  const allowEmotes = message.platform === "twitch";
+  return message.text.split(" ").map((word) => renderWord(word, allowEmotes)).join(" ");
+}
+
+function badgesMarkup(message) {
+  if (!settings.showBadges || message.platform !== "twitch" || !message.badges?.length) return "";
+  return message.badges.map((name) => {
+    const id = TWITCH_BADGE_IDS[name];
+    if (!id) return "";
+    return `<img class="badge" src="https://static-cdn.jtvnw.net/badges/v1/${id}/1" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
+  }).join("");
+}
+
+const mentionRegex = new RegExp(`@${BROADCASTER}\\b`, "i");
+
+function isMention(message) {
+  return settings.highlightMentions && message.kind !== "system" && mentionRegex.test(message.text);
+}
+
 const feedEl = document.getElementById("feed");
 
-function addMessage(user, text) {
-    const card = document.createElement("article");
-    card.className = "message-card";
-    card.innerHTML = `<span class="message-topline"><span class="message-time">${formatTime()}</span> ${platformMarkup(user.platform)}<span class="author-name" style="color:${user.color}">${escapeHtml(user.name)}:</span> <span class="message-text">${escapeHtml(text)}</span></span>`;
-    feedEl.appendChild(card);
-    feedEl.scrollTop = feedEl.scrollHeight;
+function platformMarkup(platform) {
+  return `<span class="platform-pill ${platform}">${PLATFORM_SVGS[platform]}</span>`;
 }
 
-function addRandomMessage() {
-    addMessage(pick(FAKE_USERS), pick(FAKE_MESSAGES));
-}
-function addBurst() {
-    for (let i = 0; i < 5; i++) setTimeout(addRandomMessage, i * 200);
-}
-function clearChat() {
-    feedEl.innerHTML = "";
-}
-
-function addSystemMessage(text) {
-    const card = document.createElement("article");
-    card.className = "message-card system-notice";
-    card.dataset.platform = "twitch";
-    card.innerHTML = `<span class="message-topline"><span class="message-time">${formatTime()}</span> ${platformMarkup("twitch")}<span class="message-text system-notice-text">${escapeHtml(text)}</span></span>`;
-    feedEl.appendChild(card);
-    feedEl.scrollTop = feedEl.scrollHeight;
-}
-
-const TWITCH_USERS = FAKE_USERS.filter(u => u.platform === "twitch");
-function addGiftedSub() {
-    const gifter = pick(TWITCH_USERS);
-    const recipient = pick(TWITCH_USERS.filter(u => u.name !== gifter.name));
-    addSystemMessage(`${gifter.name} gifted a Tier 1 sub to ${recipient.name}!`);
-}
-function addSub() {
-    const user = pick(TWITCH_USERS);
-    const months = 1 + Math.floor(Math.random() * 36);
-    addSystemMessage(`${user.name} subscribed at Tier 1. They've subscribed for ${months} months!`);
-}
-function addBits() {
-    const user = pick(TWITCH_USERS);
-    const amount = pick([100, 500, 1000, 5000]);
-    addSystemMessage(`${user.name} cheered ${amount} bits!`);
-}
-function addRaid() {
-    const user = pick(TWITCH_USERS);
-    const viewers = 5 + Math.floor(Math.random() * 50);
-    addSystemMessage(`${user.name} is raiding with a party of ${viewers}!`);
+function renderMessages() {
+  const visible = state.messages.filter((m) => state.filters[m.platform] !== false);
+  if (!visible.length) {
+    feedEl.innerHTML = `<div class="empty-state">No messages yet.</div>`;
+    return;
+  }
+  const wasNearBottom = isNearBottom();
+  feedEl.innerHTML = visible.map((message) => {
+    let messageClass = message.deleted ? "message-card deleted" : "message-card";
+    if (isMention(message)) messageClass += " mention";
+    const pill = settings.showPlatform ? platformMarkup(message.platform) : "";
+    if (message.kind === "system") {
+      return `
+        <article class="${messageClass} system-notice" data-platform="${message.platform}">
+          <span class="message-topline"><span class="message-time">${formatTime(message.ts)}</span> ${pill}<span class="message-text system-notice-text">${renderMessageText(message)}</span></span>
+        </article>
+      `;
+    }
+    const canModerate = (message.platform === "twitch" || message.platform === "kick") && message.author !== BROADCASTER;
+    const modAttrs = canModerate
+      ? ` data-mod-user-id="${escapeHtml(message.author)}" data-mod-user-name="${escapeHtml(message.author)}" data-mod-platform="${message.platform}" data-mod-message-id="${message.id}"`
+      : "";
+    return `
+      <article class="${messageClass}" data-platform="${message.platform}">
+        <span class="message-topline"><span class="message-time">${formatTime(message.ts)}</span> ${pill}${badgesMarkup(message)}<span class="author-name" style="color:${message.color}"${modAttrs}>${escapeHtml(message.author)}:</span> <span class="message-text">${renderMessageText(message)}</span></span>
+      </article>
+    `;
+  }).join("");
+  requestAnimationFrame(() => {
+    if (wasNearBottom) {
+      modScrollCloseSuppressedUntil = performance.now() + 200;
+      feedEl.scrollTop = feedEl.scrollHeight;
+    }
+  });
 }
 
-// === Hype train ===
-let htState = { level: 1, progress: 0, goal: 100, active: false };
+let modScrollCloseSuppressedUntil = 0;
+
+function isNearBottom() {
+  return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 100;
+}
+
+const scrollBottomBtn = document.getElementById("scroll-bottom");
+feedEl.addEventListener("scroll", () => {
+  scrollBottomBtn.classList.toggle("hidden", isNearBottom());
+});
+scrollBottomBtn.addEventListener("click", () => {
+  feedEl.scrollTop = feedEl.scrollHeight;
+});
+window.addEventListener("resize", () => {
+  feedEl.scrollTop = feedEl.scrollHeight;
+});
+
+function addMessage(message) {
+  message.id = nextId++;
+  message.ts = message.ts ?? Date.now();
+  state.messages.push(message);
+  if (state.messages.length > MAX_VISIBLE_MESSAGES) {
+    state.messages = state.messages.slice(-MAX_VISIBLE_MESSAGES);
+  }
+  renderMessages();
+  return message;
+}
+
+function fillTemplate(template) {
+  return template
+    .replaceAll("{e}", () => pick(Object.keys(NATIVE_EMOTES)))
+    .replaceAll("{7tv}", () => thirdPartyNames.length ? pick(thirdPartyNames) : pick(Object.keys(NATIVE_EMOTES)));
+}
+
+function randomChat() {
+  const roll = Math.random();
+  const user = roll < 0.6 ? pick(twitchUsers()) : roll < 0.85 ? pick(kickUsers()) : pick(ytUsers());
+  const message = addMessage({
+    kind: "chat",
+    platform: user.platform,
+    author: user.name,
+    color: user.color,
+    badges: user.badges,
+    text: fillTemplate(pick(CHAT_TEMPLATES)),
+  });
+  if (Math.random() < 0.05 && user.platform !== "youtube") {
+    setTimeout(() => {
+      message.deleted = true;
+      renderMessages();
+    }, randomInt(2500, 5000));
+  }
+}
+
+function randomNotice() {
+  const notice = pick(NOTICES)();
+  addMessage({ kind: "system", platform: notice.platform, text: notice.text });
+}
+
+function simulationTick() {
+  if (Math.random() < 0.16) {
+    randomNotice();
+  } else {
+    randomChat();
+  }
+  setTimeout(simulationTick, randomInt(700, 2600));
+}
+
+// Connector status (demo: everything connected)
+const STATUSES = [
+  { platform: "twitch", state: "connected", detail: "EventSub session healthy" },
+  { platform: "youtube", state: "connected", detail: "Live chat polling" },
+  { platform: "kick", state: "connected", detail: "Webhook subscription active" },
+];
+const statusGridEl = document.getElementById("status-grid");
+
+function renderStatuses(detailOverride) {
+  statusGridEl.innerHTML = STATUSES.map((status) => `
+    <article class="status-card">
+      <div class="status-head">
+        ${platformMarkup(status.platform)}
+        <span class="status-dot ok" aria-hidden="true"></span>
+      </div>
+      <div class="status-meta">
+        <div><strong>${status.state}</strong></div>
+        <div>${detailOverride || status.detail}</div>
+        <div>Auth: ready</div>
+      </div>
+    </article>
+  `).join("");
+}
+
+document.getElementById("refresh-status").addEventListener("click", () => {
+  renderStatuses("Refreshing…");
+  setTimeout(() => renderStatuses(), 500);
+});
+
+// Settings
+function applySettings() {
+  for (const [key, toggle] of Object.entries(settingToggles)) {
+    toggle.classList.toggle("active", settings[key]);
+  }
+  document.documentElement.style.setProperty("--chat-font", `${settings.chatFontPx}px`);
+  fontSlider.value = settings.chatFontPx;
+  fontSizeValue.textContent = `${settings.chatFontPx}px`;
+  renderMessages();
+}
+
+const settingToggles = {};
+for (const [key, id] of Object.entries({
+  showPlatform: "toggle-platform",
+  showBadges: "toggle-badges",
+  showThirdPartyEmotes: "toggle-emotes",
+  highlightMentions: "toggle-mentions",
+  use24hClock: "toggle-clock",
+})) {
+  const toggle = document.getElementById(id);
+  settingToggles[key] = toggle;
+  toggle.addEventListener("click", () => {
+    settings[key] = !settings[key];
+    applySettings();
+  });
+}
+
+const fontSlider = document.getElementById("font-size");
+const fontSizeValue = document.getElementById("font-size-value");
+fontSlider.addEventListener("input", () => {
+  settings.chatFontPx = Number(fontSlider.value);
+  document.documentElement.style.setProperty("--chat-font", `${settings.chatFontPx}px`);
+  fontSizeValue.textContent = `${settings.chatFontPx}px`;
+});
+
+document.querySelectorAll(".filter-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    const platform = button.dataset.platform;
+    state.filters[platform] = !state.filters[platform];
+    button.classList.toggle("active", state.filters[platform]);
+    renderMessages();
+  });
+});
+
+document.getElementById("clear-messages").addEventListener("click", () => {
+  if (!confirm("Clear all messages?")) return;
+  state.messages = [];
+  renderMessages();
+});
+
+// Alert sounds editor (demo: stored in memory only)
+function isValidAlertUrl(value) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
+const alertsEditBtn = document.getElementById("alerts-edit");
+
+function syncAlertsEditButton() {
+  const count = settings.alertUrls.length;
+  alertsEditBtn.textContent = count ? `✎ ${count}` : "+ Add";
+  alertsEditBtn.title = count ? "Edit alert sound overlays" : "Add alert sound overlays (StreamElements etc.)";
+}
+
+{
+  const editorEl = document.getElementById("alerts-editor");
+  const rowsEl = document.getElementById("alerts-rows");
+  const applyBtn = document.getElementById("alerts-apply");
+
+  const addRow = (value = "") => {
+    const row = document.createElement("div");
+    row.className = "alerts-row";
+    row.innerHTML = `
+      <input class="input-field alerts-input" type="url" placeholder="https://streamelements.com/overlay/…" spellcheck="false">
+      <button class="alerts-remove" type="button" title="Remove">✕</button>`;
+    row.querySelector("input").value = value;
+    rowsEl.appendChild(row);
+  };
+
+  alertsEditBtn.addEventListener("click", () => {
+    if (editorEl.classList.contains("hidden")) {
+      rowsEl.innerHTML = "";
+      (settings.alertUrls.length ? settings.alertUrls : [""]).forEach(addRow);
+      editorEl.classList.remove("hidden");
+      rowsEl.querySelector("input")?.focus();
+    } else {
+      editorEl.classList.add("hidden");
+    }
+  });
+
+  rowsEl.addEventListener("click", (event) => {
+    const remove = event.target.closest(".alerts-remove");
+    if (!remove) return;
+    remove.closest(".alerts-row").remove();
+    if (!rowsEl.children.length) {
+      settings.alertUrls = [];
+      editorEl.classList.add("hidden");
+      syncAlertsEditButton();
+    }
+  });
+
+  rowsEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyBtn.click();
+    }
+  });
+
+  document.getElementById("alerts-add-row").addEventListener("click", () => {
+    addRow();
+    rowsEl.lastElementChild.querySelector("input").focus();
+  });
+
+  applyBtn.addEventListener("click", () => {
+    let valid = true;
+    const urls = [];
+    for (const input of rowsEl.querySelectorAll(".alerts-input")) {
+      const value = input.value.trim();
+      input.classList.remove("invalid");
+      if (!value) continue;
+      if (isValidAlertUrl(value)) {
+        urls.push(value);
+      } else {
+        input.classList.add("invalid");
+        valid = false;
+      }
+    }
+    if (!valid) return;
+    settings.alertUrls = urls;
+    editorEl.classList.add("hidden");
+    syncAlertsEditButton();
+  });
+}
+
+// Reply form + emote picker (demo: sends as the broadcaster)
+const replyFormEl = document.getElementById("reply-form");
+const replyInput = document.getElementById("reply-message");
+replyFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = replyInput.value.trim();
+  if (!text) return;
+  addMessage({
+    kind: "chat",
+    platform: "twitch",
+    author: BROADCASTER,
+    color: "#9146ff",
+    badges: ["broadcaster"],
+    text,
+  });
+  replyFormEl.reset();
+});
+
+const emoteToggle = document.getElementById("emote-toggle");
+const emotePicker = document.getElementById("emote-picker");
+const emoteGrid = document.getElementById("emote-grid");
+const emoteSearch = document.getElementById("emote-search");
+
+function renderEmotes(filter) {
+  const names = Object.keys(NATIVE_EMOTES).filter((name) => name.toLowerCase().includes(filter));
+  emoteGrid.innerHTML = names.map((name) =>
+    `<img class="emote-pick" src="https://static-cdn.jtvnw.net/emoticons/v2/${NATIVE_EMOTES[name]}/default/dark/1.0" alt="${name}" title="${name}" data-name="${name}">`
+  ).join("") || '<div class="emote-loading">No emotes found</div>';
+  emoteGrid.querySelectorAll(".emote-pick").forEach((img) => {
+    img.addEventListener("click", () => {
+      const before = replyInput.value;
+      const space = before.length && !before.endsWith(" ") ? " " : "";
+      replyInput.value = before + space + img.dataset.name + " ";
+      replyInput.focus();
+    });
+  });
+}
+
+emoteToggle.addEventListener("click", () => {
+  const isOpen = !emotePicker.classList.contains("hidden");
+  if (isOpen) {
+    emotePicker.classList.add("hidden");
+    return;
+  }
+  emotePicker.classList.remove("hidden");
+  renderEmotes("");
+  emoteSearch.value = "";
+  emoteSearch.focus();
+});
+emoteSearch.addEventListener("input", () => renderEmotes(emoteSearch.value.toLowerCase()));
+document.addEventListener("click", (event) => {
+  if (!emotePicker.contains(event.target) && event.target !== emoteToggle) {
+    emotePicker.classList.add("hidden");
+  }
+});
+
+// Mod panel (demo: actions are simulated)
+const MOD_CONFIRM_MS = 4000;
+const MOD_TIMEOUT_OPTIONS = [
+  { label: "5 min", duration: 300 },
+  { label: "10 min", duration: 600 },
+  { label: "30 min", duration: 1800 },
+];
+const modPanelState = { el: null, userId: null, messageId: null, anchorRect: null, confirmTimer: null, busy: false };
+
+function ensureModPanel() {
+  if (modPanelState.el) return modPanelState.el;
+  const panel = document.createElement("div");
+  panel.className = "mod-panel hidden";
+  panel.addEventListener("click", handleModPanelClick);
+  document.body.appendChild(panel);
+  modPanelState.el = panel;
+  return panel;
+}
+
+function isModPanelOpen() {
+  return Boolean(modPanelState.el) && !modPanelState.el.classList.contains("hidden");
+}
+
+function openModPanel(nameEl) {
+  const panel = ensureModPanel();
+  resetModConfirm();
+  modPanelState.userId = nameEl.dataset.modUserId;
+  modPanelState.messageId = Number(nameEl.dataset.modMessageId);
+  modPanelState.anchorRect = nameEl.getBoundingClientRect();
+  modPanelState.busy = false;
+  const durationButtons = MOD_TIMEOUT_OPTIONS.map((option) =>
+    `<button type="button" class="mod-panel-button" data-action="timeout" data-duration="${option.duration}" data-label="${option.label}">${option.label}</button>`
+  ).join("");
+  panel.innerHTML = `
+    <div class="mod-panel-user">${escapeHtml(nameEl.dataset.modUserName || "")}</div>
+    <div class="mod-panel-actions">
+      <button type="button" class="mod-panel-button" data-action="delete" data-label="Delete msg">Delete msg</button>
+      <button type="button" class="mod-panel-button mod-ban" data-action="ban" data-label="Ban">Ban</button>
+      <button type="button" class="mod-panel-button" data-action="timeout-toggle" data-label="Timeout">Timeout</button>
+    </div>
+    <div class="mod-panel-durations hidden">${durationButtons}</div>
+    <div class="mod-panel-status"></div>
+  `;
+  panel.classList.remove("hidden");
+  positionModPanel();
+}
+
+function positionModPanel() {
+  const panel = modPanelState.el;
+  const rect = modPanelState.anchorRect;
+  if (!panel || !rect) return;
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  let left = Math.min(Math.max(rect.left, 8), window.innerWidth - width - 8);
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8) {
+    top = rect.top - height - 6;
+  }
+  panel.style.left = `${Math.max(left, 8)}px`;
+  panel.style.top = `${Math.max(top, 8)}px`;
+}
+
+function closeModPanel() {
+  if (!isModPanelOpen()) return;
+  resetModConfirm();
+  modPanelState.el.classList.add("hidden");
+  modPanelState.userId = null;
+  modPanelState.messageId = null;
+  modPanelState.anchorRect = null;
+  modPanelState.busy = false;
+}
+
+function resetModConfirm() {
+  if (modPanelState.confirmTimer) {
+    clearTimeout(modPanelState.confirmTimer);
+    modPanelState.confirmTimer = null;
+  }
+  if (!modPanelState.el) return;
+  modPanelState.el.querySelectorAll(".mod-panel-button.confirming").forEach((button) => {
+    button.classList.remove("confirming");
+    button.textContent = button.dataset.label;
+  });
+}
+
+function handleModPanelClick(event) {
+  const button = event.target.closest("button");
+  if (!button || modPanelState.busy) return;
+  if (button.dataset.action === "timeout-toggle") {
+    resetModConfirm();
+    modPanelState.el.querySelector(".mod-panel-durations").classList.toggle("hidden");
+    positionModPanel();
+    return;
+  }
+  if (!button.classList.contains("confirming")) {
+    resetModConfirm();
+    button.classList.add("confirming");
+    button.textContent = "Confirm?";
+    modPanelState.confirmTimer = window.setTimeout(resetModConfirm, MOD_CONFIRM_MS);
+    return;
+  }
+  resetModConfirm();
+  const duration = button.dataset.duration ? Number(button.dataset.duration) : null;
+  sendModAction(button.dataset.action, duration);
+}
+
+function sendModAction(action, duration) {
+  const panel = modPanelState.el;
+  const statusEl = panel.querySelector(".mod-panel-status");
+  modPanelState.busy = true;
+  panel.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  statusEl.textContent = "Sending...";
+  const userId = modPanelState.userId;
+  const messageId = modPanelState.messageId;
+  setTimeout(() => {
+    if (action === "delete") {
+      const message = state.messages.find((m) => m.id === messageId);
+      if (message) message.deleted = true;
+      statusEl.textContent = "Deleted";
+    } else {
+      for (const message of state.messages) {
+        if (message.author === userId && message.kind !== "system") message.deleted = true;
+      }
+      statusEl.textContent = duration ? `Timed out ${Math.round(duration / 60)} min` : "Banned";
+    }
+    renderMessages();
+    modPanelState.busy = false;
+    panel.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+    positionModPanel();
+  }, 400);
+}
+
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const nameEl = target?.closest(".author-name[data-mod-user-id]");
+  if (nameEl) {
+    if (isModPanelOpen() && modPanelState.messageId === Number(nameEl.dataset.modMessageId)) {
+      closeModPanel();
+    } else {
+      openModPanel(nameEl);
+    }
+    return;
+  }
+  if (isModPanelOpen() && !modPanelState.el.contains(target)) {
+    closeModPanel();
+  }
+});
+
+feedEl.addEventListener("scroll", () => {
+  if (performance.now() < modScrollCloseSuppressedUntil) return;
+  closeModPanel();
+});
+window.addEventListener("resize", closeModPanel);
+
+// Hype train (demo: starts on its own every couple of minutes)
 const htBar = document.getElementById("hype-train-bar");
 const htLevel = document.getElementById("ht-level");
 const htText = document.getElementById("ht-progress-text");
 const htFill = document.getElementById("ht-fill");
 
-function renderHt(ended = false) {
-    htLevel.textContent = htState.level;
-    const pct = Math.min(Math.round((htState.progress / htState.goal) * 100), 100);
-    htText.textContent = ended ? `Ended (${pct}%)` : `${pct}%`;
-    htFill.style.width = `${pct}%`;
-}
-function htBegin() {
-    htState = { level: 1, progress: 25, goal: 100, active: true };
-    htBar.classList.remove("hidden");
-    renderHt();
-}
-function htProgress() {
-    if (!htState.active) return htBegin();
-    const inc = 10 + Math.floor(Math.random() * 25);
-    htState.progress = Math.min(htState.progress + inc, htState.goal);
-    renderHt();
-    if (htState.progress >= htState.goal) htLevelUp();
-}
-function htLevelUp() {
-    if (!htState.active) return htBegin();
-    htState.level++;
-    htState.progress = 0;
-    htState.goal = 100 + (htState.level - 1) * 50;
-    renderHt();
-}
-function htEnd() {
-    if (!htState.active) return;
-    htState.active = false;
-    renderHt(true);
-    setTimeout(() => htBar.classList.add("hidden"), 5000);
+function renderHt(ht, ended = false) {
+  htBar.classList.remove("hidden");
+  htBar.setAttribute("aria-hidden", "false");
+  htLevel.textContent = ht.level;
+  const pct = Math.min(Math.round((ht.progress / ht.goal) * 100), 100);
+  htText.textContent = ended ? `Ended (${pct}%)` : `${pct}%`;
+  htFill.style.width = `${pct}%`;
 }
 
-// === Auto demo ===
-let autoTimer = null;
-function startAuto() {
-    stopAuto();
-    autoTimer = setInterval(() => {
-        const r = Math.random();
-        if (htState.active && r < 0.20) {
-            htProgress();
-        } else if (!htState.active && r < 0.03) {
-            htBegin();
-        } else if (r < 0.18) {
-            const sysFn = pick([addGiftedSub, addSub, addBits, addRaid]);
-            sysFn();
-        } else {
-            addRandomMessage();
-        }
-    }, 800);
-}
-function stopAuto() {
-    if (autoTimer) clearInterval(autoTimer);
-    autoTimer = null;
+function runHypeTrain() {
+  const ht = { level: 1, progress: 15, goal: 100 };
+  renderHt(ht);
+  addMessage({ kind: "system", platform: "twitch", text: "A Hype Train has started!" });
+  const tick = setInterval(() => {
+    ht.progress += randomInt(8, 22);
+    if (ht.progress >= ht.goal && ht.level < 3) {
+      ht.level += 1;
+      ht.progress = 0;
+      ht.goal += 60;
+    }
+    renderHt(ht, false);
+    if (ht.level >= 3 && ht.progress >= ht.goal * 0.6) {
+      clearInterval(tick);
+      renderHt(ht, true);
+      setTimeout(() => {
+        htBar.classList.add("hidden");
+        htBar.setAttribute("aria-hidden", "true");
+      }, 5000);
+      setTimeout(scheduleHypeTrain, randomInt(90000, 150000));
+    }
+  }, 2200);
 }
 
-// === Initial seed ===
-addMessage(FAKE_USERS[0], "yo first message");
-addMessage(FAKE_USERS[3], "shayshaymonkey: Hello!!!");
-addMessage(FAKE_USERS[7], "Greetings from YouTube chat 👋");
-addMessage(FAKE_USERS[10], "Kick chatter checking in");
-addMessage(FAKE_USERS[1], "Welcome everyone");
+function scheduleHypeTrain() {
+  setTimeout(runHypeTrain, randomInt(15000, 30000));
+}
+
+// Expand (?expand=1)
+const expandToggleBtn = document.getElementById("expand-toggle");
+const feedPanelEl = document.querySelector(".feed-panel");
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let isExpanded = (pageParams.get("expand") ?? "0") !== "0";
+let expandAnimCleanup = null;
+
+function setExpanded(on, { animate = true } = {}) {
+  if (on === isExpanded) return;
+  closeModPanel();
+  const firstRect = feedPanelEl.getBoundingClientRect();
+  const wasNearBottom = isNearBottom();
+  isExpanded = on;
+  document.documentElement.classList.toggle("expand-mode", on);
+  const params = new URLSearchParams(window.location.search);
+  if (on) {
+    params.set("expand", "1");
+  } else {
+    params.delete("expand");
+  }
+  const query = params.toString();
+  window.history.replaceState(null, "", query ? `?${query}` : window.location.pathname);
+  if (animate && !prefersReducedMotion) playExpandTransition(firstRect);
+  if (wasNearBottom) {
+    requestAnimationFrame(() => {
+      feedEl.scrollTop = feedEl.scrollHeight;
+    });
+  }
+}
+
+function playExpandTransition(firstRect) {
+  expandAnimCleanup?.();
+  const lastRect = feedPanelEl.getBoundingClientRect();
+  if (!lastRect.width || !lastRect.height) return;
+  feedPanelEl.classList.add("expand-anim");
+  feedPanelEl.style.transition = "none";
+  feedPanelEl.style.transformOrigin = "top left";
+  feedPanelEl.style.transform = `translate(${firstRect.left - lastRect.left}px, ${firstRect.top - lastRect.top}px) `
+    + `scale(${firstRect.width / lastRect.width}, ${firstRect.height / lastRect.height})`;
+  feedPanelEl.getBoundingClientRect();
+  feedPanelEl.style.transition = "transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+  feedPanelEl.style.transform = "";
+  const finish = () => {
+    feedPanelEl.classList.remove("expand-anim");
+    feedPanelEl.style.transition = "";
+    feedPanelEl.style.transformOrigin = "";
+    feedPanelEl.style.transform = "";
+    feedPanelEl.removeEventListener("transitionend", finish);
+    clearTimeout(timer);
+    expandAnimCleanup = null;
+  };
+  const timer = setTimeout(finish, 400);
+  feedPanelEl.addEventListener("transitionend", finish);
+  expandAnimCleanup = finish;
+}
+
+expandToggleBtn.addEventListener("click", () => setExpanded(true));
+document.getElementById("expand-exit").addEventListener("click", () => setExpanded(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !isExpanded) return;
+  if (isModPanelOpen()) return;
+  setExpanded(false);
+});
+
+document.getElementById("popout-chat").addEventListener("click", () => {
+  window.open(`${window.location.pathname}?expand=1`, "unified-chat-demo-popout", "width=500,height=800,resizable=yes,scrollbars=no");
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeModPanel();
+});
+
+// Demo toast
+const toastEl = document.getElementById("demo-toast");
+let toastTimer = null;
+function demoToast(message = "This is a live demo — self-host Unified Chat to connect your own accounts") {
+  toastEl.textContent = message;
+  toastEl.classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("visible"), 2800);
+}
+
+// Real 7TV global emotes, so the third-party toggle demos the real thing
+fetch("https://7tv.io/v3/emote-sets/global")
+  .then((response) => response.json())
+  .then((data) => {
+    for (const emote of data.emotes || []) {
+      thirdPartyEmotes.set(emote.name, `https://cdn.7tv.app/emote/${emote.id}/1x.webp`);
+    }
+    const favorites = ["catJAM", "EZ", "Clap", "modCheck", "peepoHappy", "FeelsOkayMan", "AlienPls", "GIGACHAD"]
+      .filter((name) => thirdPartyEmotes.has(name));
+    thirdPartyNames = favorites.length ? favorites : [...thirdPartyEmotes.keys()].slice(0, 8);
+    renderMessages();
+  })
+  .catch(() => {});
+
+// Boot: seed some history, then let the stream run
+const seed = [
+  () => randomChat(), () => randomChat(), () => randomChat(), () => randomNotice(),
+  () => randomChat(), () => randomChat(), () => randomNotice(), () => randomChat(),
+  () => randomChat(), () => randomChat(), () => randomChat(), () => randomChat(),
+];
+const now = Date.now();
+seed.forEach((fn, index) => {
+  fn();
+  const message = state.messages[state.messages.length - 1];
+  if (message) message.ts = now - (seed.length - index) * 9000;
+});
+renderMessages();
+renderStatuses();
+applySettings();
+syncAlertsEditButton();
+setTimeout(simulationTick, 1200);
+scheduleHypeTrain();
 </script>
 </body>
 </html>
