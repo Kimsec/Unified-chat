@@ -33,6 +33,7 @@ class UnifiedMessage(BaseModel):
     avatar_url: str | None = None
     badges: list[Badge] = Field(default_factory=list)
     emotes: list[Emote] = Field(default_factory=list)
+    bits: int = 0
     text: str
     sent_at: datetime
     deleted_at: datetime | None = None
@@ -52,6 +53,7 @@ class ConnectorStatus(BaseModel):
 
 class ReplyRequest(BaseModel):
     message: str
+    reply_to_message_id: str | None = None
 
 
 class ModerationRequest(BaseModel):
