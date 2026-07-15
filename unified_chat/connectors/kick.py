@@ -556,6 +556,51 @@ class KickConnector(BaseConnector):
             )
         return unified
 
+    # Sends as the user when a user token exists, otherwise as the app's bot identity.
+    async def send_message(self, message_text: str, reply_to_message_id: str | None = None) -> dict[str, Any]:
+        content = (message_text or "").strip()
+        if not content:
+            raise ValueError("Message is empty")
+        broadcaster_id = str(self.settings.kick_broadcaster_user_id or "").strip()
+        if not broadcaster_id:
+            raise ValueError("KICK_BROADCASTER_USER_ID is required to send Kick messages")
+
+        token = await self._get_user_token()
+        message_type = "user"
+        if not token:
+            token = await self._get_app_token()
+            message_type = "bot"
+        if not token:
+            raise RuntimeError("No Kick token available; set credentials or visit /auth/kick/start")
+
+        body: dict[str, Any] = {
+            "broadcaster_user_id": int(broadcaster_id),
+            "content": content[:500],
+            "type": message_type,
+        }
+        if reply_to_message_id:
+            body["reply_to_message_id"] = str(reply_to_message_id)
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+            async with session.post(f"{self.API_BASE_URL}/chat", headers=headers, json=body) as response:
+                try:
+                    payload = await response.json(content_type=None)
+                except Exception:
+                    payload = {"raw": await response.text()}
+                if response.status < 400:
+                    return payload
+                if response.status in (401, 403) and message_type == "user":
+                    raise RuntimeError(
+                        "Kick rejected the send; re-authorize via /auth/kick/start "
+                        "so the token gets the chat:write scope"
+                    )
+                raise RuntimeError(f"Kick send failed {response.status}: {payload}")
+
     async def ban_user(
         self,
         user_id: str,
