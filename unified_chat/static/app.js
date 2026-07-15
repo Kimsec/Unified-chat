@@ -1,4 +1,23 @@
 const isPopout = document.body.dataset.mode === "popout";
+const pageParams = new URLSearchParams(window.location.search);
+
+// Overlay mode (/overlay): transparent OBS variant with auto-fading messages.
+const isOverlay = isPopout && (window.location.pathname === "/overlay" || pageParams.has("overlay"));
+const OVERLAY_FADE_MS = Math.max(Number(pageParams.get("fade")) || 60, 5) * 1000;
+const OVERLAY_FADE_OUT_MS = 2500;
+const overlayOptions = {
+  size: Math.min(Math.max(Number(pageParams.get("size")) || 0, 0), 64),
+  alignRight: pageParams.get("align") === "right",
+  max: Math.min(Math.max(Number(pageParams.get("max")) || 0, 0), 200),
+  icons: pageParams.get("icons") !== "0",
+};
+if (isOverlay) {
+  const root = document.documentElement;
+  root.classList.add("overlay-mode");
+  if (overlayOptions.size) root.style.setProperty("--overlay-font", `${overlayOptions.size}px`);
+  if (overlayOptions.alignRight) root.classList.add("overlay-align-right");
+  if (!overlayOptions.icons) root.classList.add("overlay-no-icons");
+}
 
 const state = {
   messages: [],
@@ -10,7 +29,7 @@ const state = {
   },
   hypeTrain: null,
 };
-const MAX_VISIBLE_MESSAGES = 200;
+const MAX_VISIBLE_MESSAGES = isOverlay && overlayOptions.max ? overlayOptions.max : 200;
 
 const feedEl = document.getElementById("feed");
 const statusGridEl = document.getElementById("status-grid");
@@ -23,9 +42,7 @@ const PLATFORM_SVGS = {
   youtube: `<svg viewBox="0 0 576 512" aria-hidden="true"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
   kick: `<img src="/static/kick-logo.ico" aria-hidden="true">`,
 };
-// Display settings live on the server; URL params (?platform=0&badges=0&emotes=0
-// &mentions=0&clock=0&size=18) override per page, e.g. for a specific embed.
-const pageParams = new URLSearchParams(window.location.search);
+// Server-stored display settings; URL params (platform/badges/emotes/mentions/clock/size) override per page.
 const SETTING_URL_PARAMS = {
   showPlatform: "platform",
   showBadges: "badges",
@@ -144,7 +161,7 @@ function savedAlertUrls() {
 }
 
 function activeAlertUrls() {
-  if (pageParams.get("alerts") === "0") return [];
+  if (isOverlay || pageParams.get("alerts") === "0") return [];
   if (!isPopout && !isExpanded) return [];
   return savedAlertUrls();
 }
@@ -200,10 +217,42 @@ function emoteImg(url, name) {
   return `<img class="emote" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
 }
 
-function renderPlainText(text, platform) {
-  if (platform !== "twitch" || !settingOn("showThirdPartyEmotes") || !thirdPartyEmotes.size) return linkifyText(text);
+// Global cheermotes from Twitch's open CDN, only applied to messages that carried bits.
+const CHEERMOTE_PREFIXES = new Set([
+  "cheer", "cheerwhal", "corgo", "uni", "showlove", "party", "seemsgood", "pride",
+  "kappa", "frankerz", "heyguys", "dansgame", "trihard", "kreygasm", "4head",
+  "swiftrage", "notlikethis", "failfish", "vohiyo", "pjsalt", "mrdestructoid",
+  "bday", "ripcheer", "shamrock",
+]);
+const CHEER_TIERS = [
+  [10000, "#f43021"],
+  [5000, "#0099fe"],
+  [1000, "#1db2a5"],
+  [100, "#9c3ee8"],
+  [1, "#979797"],
+];
+
+function cheermoteMarkup(word) {
+  const match = /^(.+?)(\d+)$/.exec(word);
+  if (!match) return null;
+  const prefix = match[1].toLowerCase();
+  if (!CHEERMOTE_PREFIXES.has(prefix)) return null;
+  const amount = Number(match[2]);
+  const [tier, color] = CHEER_TIERS.find(([min]) => amount >= min) || CHEER_TIERS[CHEER_TIERS.length - 1];
+  const src = `https://d3aqoihi2n8ty8.cloudfront.net/actions/${prefix}/dark/animated/${tier}/1.gif`;
+  return `<img class="emote" src="${src}" alt="${escapeHtml(word)}" title="${escapeHtml(word)}"><span class="cheer-amount" style="color:${color}">${amount}</span>`;
+}
+
+function renderPlainText(text, platform, bits) {
+  if (platform !== "twitch") return linkifyText(text);
+  const useEmotes = settingOn("showThirdPartyEmotes") && thirdPartyEmotes.size;
+  if (!useEmotes && !bits) return linkifyText(text);
   return text.split(" ").map((word) => {
-    const url = thirdPartyEmotes.get(word);
+    if (bits) {
+      const cheer = cheermoteMarkup(word);
+      if (cheer) return cheer;
+    }
+    const url = useEmotes ? thirdPartyEmotes.get(word) : undefined;
     return url ? emoteImg(url, word) : linkifyText(word);
   }).join(" ");
 }
@@ -312,8 +361,8 @@ const EMOTE_IMAGE_URLS = {
   kick: (id) => `https://files.kick.com/emotes/${id}/fullsize`,
 };
 
-function renderMessageText(text, emotes, platform) {
-  if (!emotes || !emotes.length) return renderPlainText(text, platform);
+function renderMessageText(text, emotes, platform, bits = 0) {
+  if (!emotes || !emotes.length) return renderPlainText(text, platform, bits);
   const emoteUrl = EMOTE_IMAGE_URLS[platform] || EMOTE_IMAGE_URLS.twitch;
   // Array.from splits by code points, matching the server's Python indexing.
   const chars = Array.from(text);
@@ -322,13 +371,13 @@ function renderMessageText(text, emotes, platform) {
   let cursor = 0;
   for (const emote of sorted) {
     if (emote.begin > cursor) {
-      result += renderPlainText(chars.slice(cursor, emote.begin).join(""), platform);
+      result += renderPlainText(chars.slice(cursor, emote.begin).join(""), platform, bits);
     }
     result += emoteImg(emoteUrl(encodeURIComponent(emote.id)), emote.text);
     cursor = emote.end;
   }
   if (cursor < chars.length) {
-    result += renderPlainText(chars.slice(cursor).join(""), platform);
+    result += renderPlainText(chars.slice(cursor).join(""), platform, bits);
   }
   return result;
 }
@@ -341,8 +390,7 @@ function formatTime(isoString) {
   }
 }
 
-// Messages @-mentioning the broadcaster get highlighted; broadcaster names are
-// collected from the raw Twitch/Kick payloads that ride along with messages.
+// Broadcaster names for mention highlighting, collected from raw Twitch/Kick payloads.
 const mentionNames = new Set();
 let mentionRegex = null;
 
@@ -384,6 +432,13 @@ function normalizeMessages(messages) {
     .slice(-MAX_VISIBLE_MESSAGES);
 }
 
+// Negative delay resumes the fade mid-life after a DOM rebuild.
+function overlayFadeStyle(message) {
+  if (!isOverlay) return "";
+  const age = Math.max(Date.now() - new Date(message.sent_at).getTime(), 0);
+  return ` style="animation-delay: ${OVERLAY_FADE_MS - OVERLAY_FADE_OUT_MS - age}ms"`;
+}
+
 function renderMessages() {
   const visibleMessages = state.messages.filter((message) => state.filters[message.platform] !== false);
 
@@ -407,8 +462,8 @@ function renderMessages() {
 
     if (isSystemNotice) {
       return `
-        <article class="${messageClass} system-notice" data-platform="${message.platform}">
-          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
+        <article class="${messageClass} system-notice" data-platform="${message.platform}"${overlayFadeStyle(message)}>
+          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes, message.platform, message.bits)}</span></span>
         </article>
       `;
     }
@@ -421,8 +476,8 @@ function renderMessages() {
       : "";
 
     return `
-      <article class="${messageClass}" data-platform="${message.platform}">
-        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}${badgesMarkup(message)}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
+      <article class="${messageClass}" data-platform="${message.platform}"${overlayFadeStyle(message)}>
+        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}${badgesMarkup(message)}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes, message.platform, message.bits)}</span></span>
       </article>
     `;
   }).join("");
@@ -584,6 +639,7 @@ function scheduleHypeTrainHide(delayMs = 5000) {
 }
 
 function handleHypeTrain(data) {
+  if (isOverlay) return;
   if (!data) {
     resetHypeTrainBar();
     return;
@@ -700,6 +756,20 @@ if (popoutBtn) {
   });
 }
 
+const infoOverlayEl = document.getElementById("info-overlay");
+const openInfoBtn = document.getElementById("open-info");
+if (infoOverlayEl && openInfoBtn) {
+  const closeInfo = () => infoOverlayEl.classList.add("hidden");
+  openInfoBtn.addEventListener("click", () => infoOverlayEl.classList.remove("hidden"));
+  document.getElementById("close-info").addEventListener("click", closeInfo);
+  infoOverlayEl.addEventListener("click", (event) => {
+    if (event.target === infoOverlayEl) closeInfo();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !infoOverlayEl.classList.contains("hidden")) closeInfo();
+  });
+}
+
 // Expand (?expand=1): the main page expands into the popout layout in place.
 const expandToggleBtn = document.getElementById("expand-toggle");
 const feedPanelEl = document.querySelector(".feed-panel");
@@ -768,6 +838,7 @@ if (expandToggleBtn) {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !isExpanded) return;
     if (isModPanelOpen()) return;
+    if (infoOverlayEl && !infoOverlayEl.classList.contains("hidden")) return;
     setExpanded(false);
   });
 }
@@ -944,34 +1015,113 @@ function renderEmotes(filter) {
   });
 }
 
+// Reply target (Twitch / Kick / both), picked from the icon inside the input field.
+const PLATFORM_LABELS = { twitch: "Twitch", kick: "Kick" };
+const replyTargetToggle = document.getElementById("reply-target-toggle");
+const replyTargetMenu = document.getElementById("reply-target-menu");
+const replyContextEl = document.getElementById("reply-context");
+const replyContextTextEl = document.getElementById("reply-context-text");
+const TARGET_ICONS = {
+  twitch: PLATFORM_SVGS.twitch,
+  kick: PLATFORM_SVGS.kick,
+  all: `<span class="reply-target-all">ALL</span>`,
+};
+let replyTarget = "twitch";
+try {
+  replyTarget = window.localStorage.getItem("replyTarget") || "twitch";
+} catch (_) {}
+if (!["twitch", "kick", "all"].includes(replyTarget)) replyTarget = "twitch";
+let replyContext = null;
+
+function setReplyTarget(target) {
+  replyTarget = target;
+  try {
+    window.localStorage.setItem("replyTarget", target);
+  } catch (_) {}
+  replyTargetToggle.innerHTML = TARGET_ICONS[target];
+  replyTargetToggle.title = target === "all" ? "Sending to Twitch + Kick" : `Sending to ${PLATFORM_LABELS[target]}`;
+  replyTargetMenu.querySelectorAll(".reply-target-option").forEach((button) => {
+    button.classList.toggle("active", button.dataset.target === target);
+  });
+  replyInput.placeholder = target === "all" ? "Reply to Twitch + Kick..." : `Reply to ${PLATFORM_LABELS[target]}...`;
+  if (replyContext && target !== "all" && target !== replyContext.platform) clearReplyContext();
+}
+
+function setReplyContext(platform, messageId, author) {
+  replyContext = { platform, messageId, author };
+  replyContextTextEl.textContent = `↩ Replying to ${author} on ${PLATFORM_LABELS[platform]}`;
+  replyContextEl.classList.remove("hidden");
+  if (replyTarget !== "all" && replyTarget !== platform) setReplyTarget(platform);
+  replyInput.focus();
+}
+
+function clearReplyContext() {
+  replyContext = null;
+  replyContextEl.classList.add("hidden");
+}
+
+if (replyTargetToggle) {
+  replyTargetToggle.addEventListener("click", () => {
+    replyTargetMenu.classList.toggle("hidden");
+  });
+  replyTargetMenu.addEventListener("click", (event) => {
+    const button = event.target.closest(".reply-target-option");
+    if (!button) return;
+    setReplyTarget(button.dataset.target);
+    replyTargetMenu.classList.add("hidden");
+    replyInput.focus();
+  });
+  document.addEventListener("click", (event) => {
+    if (!replyTargetMenu.contains(event.target) && !replyTargetToggle.contains(event.target)) {
+      replyTargetMenu.classList.add("hidden");
+    }
+  });
+  setReplyTarget(replyTarget);
+  document.getElementById("reply-context-clear").addEventListener("click", clearReplyContext);
+}
+
+replyInput.addEventListener("input", () => {
+  replyStatusEl.textContent = "";
+});
+
 replyFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const formData = new FormData(replyFormEl);
-  const message = String(formData.get("message") || "").trim();
+  const message = replyInput.value.trim();
   if (!message) return;
 
   const submitBtn = replyFormEl.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  try {
-    const response = await fetch("/api/reply/twitch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (response.status === 401) {
-      window.location.href = "/login";
-      return;
+  replyStatusEl.textContent = "";
+  const targets = replyTarget === "all" ? ["twitch", "kick"] : [replyTarget];
+  const errors = [];
+  await Promise.all(targets.map(async (platform) => {
+    try {
+      const body = { message };
+      if (replyContext?.platform === platform) body.reply_to_message_id = replyContext.messageId;
+      const response = await fetch(`/api/reply/${platform}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || "Unknown send error");
+      }
+    } catch (error) {
+      errors.push(`${PLATFORM_LABELS[platform]}: ${error.message || error}`);
     }
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail || "Unknown Twitch send error");
-    }
+  }));
+  if (errors.length) {
+    replyStatusEl.textContent = errors.join(" · ");
+  } else {
     replyFormEl.reset();
-  } catch (error) {
-    console.error("Reply failed:", error);
-  } finally {
-    if (submitBtn) submitBtn.disabled = false;
+    clearReplyContext();
   }
+  if (submitBtn) submitBtn.disabled = false;
 });
 
 // Twitch/Kick mod actions panel (broadcaster-only feature; no visual affordance on names)
@@ -984,6 +1134,7 @@ const MOD_TIMEOUT_OPTIONS = [
 const modPanelState = {
   el: null,
   userId: null,
+  userName: null,
   platform: null,
   messageId: null,
   anchorRect: null,
@@ -1009,6 +1160,7 @@ function openModPanel(nameEl) {
   const panel = ensureModPanel();
   resetModConfirm();
   modPanelState.userId = nameEl.dataset.modUserId;
+  modPanelState.userName = nameEl.dataset.modUserName || "";
   modPanelState.platform = nameEl.dataset.modPlatform || "twitch";
   modPanelState.messageId = nameEl.dataset.modMessageId || null;
   modPanelState.anchorRect = nameEl.getBoundingClientRect();
@@ -1016,12 +1168,16 @@ function openModPanel(nameEl) {
   const durationButtons = MOD_TIMEOUT_OPTIONS.map((option) =>
     `<button type="button" class="mod-panel-button" data-action="timeout" data-duration="${option.duration}" data-label="${option.label}">${option.label}</button>`
   ).join("");
+  const replyButton = modPanelState.messageId
+    ? `<button type="button" class="mod-panel-button" data-action="reply" data-label="Reply">Reply</button>`
+    : "";
   const deleteButton = modPanelState.messageId
     ? `<button type="button" class="mod-panel-button" data-action="delete" data-label="Delete msg">Delete msg</button>`
     : "";
   panel.innerHTML = `
     <div class="mod-panel-user">${escapeHtml(nameEl.dataset.modUserName || "")}</div>
     <div class="mod-panel-actions">
+      ${replyButton}
       ${deleteButton}
       <button type="button" class="mod-panel-button mod-ban" data-action="ban" data-label="Ban">Ban</button>
       <button type="button" class="mod-panel-button" data-action="timeout-toggle" data-label="Timeout">Timeout</button>
@@ -1054,6 +1210,7 @@ function closeModPanel() {
   resetModConfirm();
   modPanelState.el.classList.add("hidden");
   modPanelState.userId = null;
+  modPanelState.userName = null;
   modPanelState.platform = null;
   modPanelState.messageId = null;
   modPanelState.anchorRect = null;
@@ -1075,6 +1232,12 @@ function resetModConfirm() {
 function handleModPanelClick(event) {
   const button = event.target.closest("button");
   if (!button || modPanelState.busy) return;
+
+  if (button.dataset.action === "reply") {
+    setReplyContext(modPanelState.platform, modPanelState.messageId, modPanelState.userName);
+    closeModPanel();
+    return;
+  }
 
   if (button.dataset.action === "timeout-toggle") {
     resetModConfirm();
@@ -1183,6 +1346,18 @@ feedEl.addEventListener("scroll", () => {
   closeModPanel();
 });
 window.addEventListener("resize", closeModPanel);
+
+if (isOverlay) {
+  // Prune messages the fade animation has already hidden.
+  setInterval(() => {
+    const cutoff = Date.now() - OVERLAY_FADE_MS;
+    const kept = state.messages.filter((message) => new Date(message.sent_at).getTime() >= cutoff);
+    if (kept.length !== state.messages.length) {
+      state.messages = kept;
+      renderMessages();
+    }
+  }, 1000);
+}
 
 fetchBootstrap()
   .then(connectSocket)
