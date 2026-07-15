@@ -295,6 +295,7 @@ async def index(request: Request):
 
 
 @app.get("/popout", response_class=HTMLResponse)
+@app.get("/overlay", response_class=HTMLResponse)
 async def popout(request: Request):
     token = request.query_params.get("token")
     if token and settings.popout_token and secrets.compare_digest(token, settings.popout_token):
@@ -373,12 +374,25 @@ async def reply_twitch(payload: ReplyRequest, request: Request):
     require_json_auth(request)
     runtime = get_runtime(request)
     try:
-        result = await runtime.twitch.send_reply(payload.message)
+        result = await runtime.twitch.send_reply(payload.message, payload.reply_to_message_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "platform": "twitch", "result": result}
+
+
+@app.post("/api/reply/kick")
+async def reply_kick(payload: ReplyRequest, request: Request):
+    require_json_auth(request)
+    runtime = get_runtime(request)
+    try:
+        result = await runtime.kick.send_message(payload.message, payload.reply_to_message_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "platform": "kick", "result": result}
 
 
 @app.post("/api/mod/twitch/ban")
