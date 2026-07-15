@@ -54,9 +54,28 @@
                 <input id="emote-search" class="emote-search" type="text" placeholder="Search emotes...">
                 <div id="emote-grid" class="emote-grid"></div>
             </div>
+            <div id="reply-context" class="reply-context hidden">
+                <span id="reply-context-text"></span>
+                <button id="reply-context-clear" type="button" title="Cancel reply">✕</button>
+            </div>
             <form id="reply-form" class="reply-form-inline">
-                <input id="reply-message" name="message" type="text" maxlength="500"
-                    placeholder="Reply to Twitch..." class="reply-input">
+                <div class="reply-input-wrap">
+                    <input id="reply-message" name="message" type="text" maxlength="500"
+                        placeholder="Reply to Twitch..." class="reply-input">
+                    <button id="reply-target-toggle" class="reply-target-toggle" type="button"
+                        title="Choose where to send"></button>
+                    <div id="reply-target-menu" class="reply-target-menu hidden">
+                        <button class="reply-target-option" data-target="twitch" type="button">
+                            <svg viewBox="0 0 256 268" aria-hidden="true"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>
+                            Twitch</button>
+                        <button class="reply-target-option" data-target="kick" type="button">
+                            <img src="/static/kick-logo.ico" alt="">
+                            Kick</button>
+                        <button class="reply-target-option" data-target="all" type="button">
+                            <span class="reply-target-all">ALL</span>
+                            Both</button>
+                    </div>
+                </div>
                 <button id="emote-toggle" class="emote-toggle" type="button" title="Emotes">😊</button>
                 <button type="submit" class="primary-button">Send</button>
             </form>
