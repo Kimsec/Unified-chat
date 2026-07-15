@@ -811,7 +811,154 @@ h2 {
 }
 
 .reply-status {
+    margin: 0;
+    padding: 0 12px 10px;
+    font-size: 0.78rem;
+    color: var(--danger);
+}
+
+.reply-status:empty {
     display: none;
+}
+
+.reply-input-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+}
+
+.reply-input-wrap .reply-input {
+    padding-right: 42px;
+}
+
+.reply-target-toggle {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms ease;
+}
+
+.reply-target-toggle:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.reply-target-toggle svg,
+.reply-target-toggle img {
+    height: 14px;
+    width: auto;
+    pointer-events: none;
+}
+
+.reply-target-all {
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    pointer-events: none;
+}
+
+.reply-target-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 8px);
+    z-index: 40;
+    min-width: 130px;
+    padding: 6px;
+    display: grid;
+    gap: 2px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+}
+
+.reply-target-menu.hidden {
+    display: none;
+}
+
+.reply-target-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 160ms ease;
+}
+
+.reply-target-option:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.reply-target-option.active {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.reply-target-option svg,
+.reply-target-option img {
+    height: 15px;
+    width: 15px;
+}
+
+.reply-target-option .reply-target-all {
+    width: 15px;
+    text-align: center;
+}
+
+.reply-context {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--panel-border);
+    font-size: 0.78rem;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+.reply-context.hidden {
+    display: none;
+}
+
+#reply-context-clear {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    font-size: 0.62rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms ease, color 160ms ease;
+}
+
+#reply-context-clear:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text);
 }
 
 .hype-train-bar {
@@ -1083,6 +1230,13 @@ h2 {
     height: 1.4em;
     vertical-align: middle;
     margin: 0 1px;
+}
+
+.cheer-amount {
+    font-weight: 700;
+    font-size: 0.85em;
+    vertical-align: middle;
+    margin: 0 3px 0 1px;
 }
 
 .message-meta {
@@ -1374,4 +1528,177 @@ html.expand-mode .expand-controls {
 .expand-exit:hover {
     transform: scale(1.1);
     background: rgba(255, 59, 48, 0.25);
+}
+
+/* --- "More info" overlay --- */
+
+.info-button {
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
+.info-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(2, 6, 12, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.info-overlay.hidden {
+    display: none;
+}
+
+.info-dialog {
+    width: 100%;
+    max-width: 560px;
+    max-height: min(80vh, 640px);
+    display: flex;
+    flex-direction: column;
+    animation: fade-in 180ms ease;
+}
+
+.info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px 0;
+}
+
+.info-close {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms ease, color 160ms ease;
+}
+
+.info-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+}
+
+.info-body {
+    padding: 10px 20px 20px;
+    overflow-y: auto;
+    display: grid;
+    gap: 14px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 149, 184, 0.35) transparent;
+}
+
+.info-body h3 {
+    margin: 0 0 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+}
+
+.info-body ul {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 5px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: var(--text);
+}
+
+.info-body li::marker {
+    color: var(--muted);
+}
+
+/* --- OBS overlay mode (/overlay) --- */
+
+html.overlay-mode,
+html.overlay-mode body {
+    background: transparent;
+}
+
+html.overlay-mode .feed-panel {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
+html.overlay-mode .scroll-bottom,
+html.overlay-mode .hype-train-bar,
+html.overlay-mode .reply-form-inline,
+html.overlay-mode .reply-context,
+html.overlay-mode .reply-status,
+html.overlay-mode .emote-picker,
+html.overlay-mode .alerts-unlock,
+html.overlay-mode .empty-state {
+    display: none;
+}
+
+html.overlay-mode .feed {
+    scrollbar-width: none;
+}
+
+html.overlay-mode .feed::-webkit-scrollbar {
+    display: none;
+}
+
+/* Bottom-anchored, so an expiring card's removal never moves the rest. */
+html.overlay-mode .feed {
+    justify-content: flex-end;
+}
+
+html.overlay-mode .message-card {
+    background: transparent;
+    border: none;
+    font-size: var(--overlay-font, 1rem);
+    /* Crisp 1px outline (zero-blur shadows) for readability on stream content. */
+    text-shadow:
+        1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000,
+        1px 1px 0 #000, -1px 1px 0 #000, 1px -1px 0 #000, -1px -1px 0 #000;
+    animation: overlay-fade 2500ms linear forwards;
+}
+
+html.overlay-mode .message-text {
+    font-size: calc(var(--overlay-font, 1rem) * 0.93);
+}
+
+html.overlay-mode .badge {
+    width: 1em;
+    height: 1em;
+}
+
+html.overlay-mode .message-time {
+    display: none;
+}
+
+html.overlay-align-right .message-card {
+    text-align: right;
+}
+
+html.overlay-no-icons .platform-pill {
+    display: none;
+}
+
+@keyframes overlay-fade {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
 }
