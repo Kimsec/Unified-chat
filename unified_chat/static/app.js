@@ -1,3 +1,5 @@
+const isPopout = document.body.dataset.mode === "popout";
+
 const state = {
   messages: [],
   statuses: new Map(),
@@ -16,56 +18,194 @@ const replyFormEl = document.getElementById("reply-form");
 const replyStatusEl = document.getElementById("reply-status");
 const refreshButtonEl = document.getElementById("refresh-status");
 
-const PLATFORM_NAMES = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
 const PLATFORM_SVGS = {
   twitch: `<svg viewBox="0 0 256 268" aria-hidden="true"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>`,
   youtube: `<svg viewBox="0 0 576 512" aria-hidden="true"><path fill="#ff0000" d="M549.66 124.63a68.28 68.28 0 0 0-48.05-48.28C458.78 64 288 64 288 64S117.22 64 74.39 76.35a68.28 68.28 0 0 0-48.05 48.28C14.48 167.83 14.48 256 14.48 256s0 88.17 11.86 131.37a68.28 68.28 0 0 0 48.05 48.28C117.22 448 288 448 288 448s170.78 0 213.61-12.35a68.28 68.28 0 0 0 48.05-48.28C561.52 344.17 561.52 256 561.52 256s0-88.17-11.86-131.37zM232.15 337.28V174.72L374.86 256l-142.71 81.28z"/></svg>`,
   kick: `<img src="/static/kick-logo.ico" aria-hidden="true">`,
 };
-const PLATFORM_NAMES_STORAGE_KEY = "showPlatformNames";
-const platformNamesChannel = typeof BroadcastChannel !== "undefined"
-  ? new BroadcastChannel("unified-chat-platform-preferences")
-  : null;
-const platformNamesOverride = readPlatformNamesOverride();
-let showPlatformNames = platformNamesOverride ?? readPlatformNamesPreference();
+// Display settings live on the server; URL params (?platform=0&badges=0&emotes=0
+// &mentions=0&clock=0&size=18) override per page, e.g. for a specific embed.
+const pageParams = new URLSearchParams(window.location.search);
+const SETTING_URL_PARAMS = {
+  showPlatform: "platform",
+  showBadges: "badges",
+  showThirdPartyEmotes: "emotes",
+  highlightMentions: "mentions",
+  use24hClock: "clock",
+};
+const settings = {
+  showPlatform: true,
+  showBadges: true,
+  showThirdPartyEmotes: true,
+  highlightMentions: true,
+  use24hClock: true,
+  chatFontPx: 16,
+  alertUrls: [],
+};
+const settingOverrides = {};
+for (const [key, param] of Object.entries(SETTING_URL_PARAMS)) {
+  const value = pageParams.get(param);
+  if (value !== null) settingOverrides[key] = value !== "0";
+}
+const sizeParam = Number(pageParams.get("size"));
+if (sizeParam) settingOverrides.chatFontPx = Math.min(Math.max(sizeParam, 12), 24);
 
-function readPlatformNamesOverride() {
-  const rawValue = window.UNIFIED_CHAT_CONFIG?.platformNamesOverride;
-  if (rawValue == null || rawValue === "") return null;
-  const normalized = String(rawValue).trim().toLowerCase();
-  if (["0", "false", "off", "no"].includes(normalized)) return false;
-  if (["1", "true", "on", "yes"].includes(normalized)) return true;
-  return null;
+function settingOn(key) {
+  return settingOverrides[key] ?? settings[key];
 }
 
-function readPlatformNamesPreference() {
+function applySettings(next) {
+  Object.assign(settings, next || {});
+  for (const [key, toggle] of Object.entries(settingToggles)) {
+    toggle.classList.toggle("active", settingOn(key));
+  }
+  applyChatFont();
+  renderAlertFrames();
+  syncAlertsEditButton();
+}
+
+function applyChatFont() {
+  const px = settingOn("chatFontPx");
+  document.documentElement.style.setProperty("--chat-font", `${px}px`);
+  if (fontSlider) {
+    fontSlider.value = px;
+    fontSizeValue.textContent = `${px}px`;
+  }
+}
+
+async function updateSetting(key, value) {
   try {
-    return window.localStorage.getItem(PLATFORM_NAMES_STORAGE_KEY) !== "false";
-  } catch (_) {
-    return true;
-  }
-}
-
-function updatePlatformNamesPreference(nextValue, { broadcast = false } = {}) {
-  showPlatformNames = Boolean(nextValue);
-  if (platformNamesOverride === null) {
-    try {
-      window.localStorage.setItem(PLATFORM_NAMES_STORAGE_KEY, String(showPlatformNames));
-    } catch (_) {}
-  }
-  if (toggleNames) {
-    toggleNames.classList.toggle("active", showPlatformNames);
-  }
-  renderStatuses();
-  renderMessages();
-  if (broadcast && platformNamesChannel && platformNamesOverride === null) {
-    platformNamesChannel.postMessage({ type: "showPlatformNames", value: showPlatformNames });
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: value }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Unknown settings error");
+    }
+    applySettings(payload.settings);
+    renderMessages();
+  } catch (error) {
+    console.error("Setting update failed:", error);
   }
 }
 
 function platformMarkup(platform) {
-  const name = showPlatformNames ? `<span class="platform-name">${PLATFORM_NAMES[platform]}</span>` : "";
-  return `<span class="platform-pill ${platform}">${PLATFORM_SVGS[platform]}${name}</span>`;
+  return `<span class="platform-pill ${platform}">${PLATFORM_SVGS[platform]}</span>`;
+}
+
+const TWITCH_BADGE_IDS = {
+  broadcaster: "5527c58c-fb7d-422d-b71b-f309dcb85cc1",
+  moderator: "3267646d-33f0-4b17-b3df-f923a41db1d0",
+  vip: "b817aba4-fad8-49e2-b88a-7cc744dfa6ec",
+  partner: "d12a2e27-16f6-41d0-ab77-b780518f00a3",
+  subscriber: "5d9f2208-5dd8-11e7-8513-2ff4adfae661",
+  founder: "511b78a9-ab37-472f-9569-457753bbe7d3",
+  premium: "bbbe0db0-a598-423e-86d0-f9fb98ca1933",
+  turbo: "bd444ec6-8f34-4bf9-91f4-af1e3428d80f",
+  staff: "d97c37bd-a6f5-4c38-8f57-4e4bef88af34",
+  "sub-gifter": "f1d8486f-eb2e-4553-b44f-4d614617afc1",
+};
+
+function badgesMarkup(message) {
+  if (!settingOn("showBadges") || message.platform !== "twitch" || !message.badges?.length) return "";
+  return message.badges.map((badge) => {
+    const name = String(badge.type || "").toLowerCase();
+    const id = TWITCH_BADGE_IDS[name];
+    if (!id) return "";
+    return `<img class="badge" src="https://static-cdn.jtvnw.net/badges/v1/${id}/1" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
+  }).join("");
+}
+
+// Third-party Twitch emotes (7TV/BTTV/FFZ), name → url, sent by the server.
+let thirdPartyEmotes = new Map();
+
+// Alert sounds: hidden alert-overlay iframes, active in the popout and expanded chat.
+const alertFramesEl = document.getElementById("alert-frames");
+const alertsUnlockEl = document.getElementById("alerts-unlock");
+const alertsEditBtn = document.getElementById("alerts-edit");
+let alertAudioUnlocked = false;
+
+function isValidAlertUrl(value) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
+function savedAlertUrls() {
+  return (Array.isArray(settings.alertUrls) ? settings.alertUrls : []).filter(isValidAlertUrl);
+}
+
+function activeAlertUrls() {
+  if (pageParams.get("alerts") === "0") return [];
+  if (!isPopout && !isExpanded) return [];
+  return savedAlertUrls();
+}
+
+function renderAlertFrames() {
+  if (!alertFramesEl) return;
+  const urls = activeAlertUrls();
+  for (const frame of [...alertFramesEl.children]) {
+    if (!urls.includes(frame.src)) frame.remove();
+  }
+  const existing = new Set([...alertFramesEl.children].map((frame) => frame.src));
+  for (const url of urls) {
+    if (existing.has(url)) continue;
+    const frame = document.createElement("iframe");
+    frame.src = url;
+    frame.allow = "autoplay";
+    frame.tabIndex = -1;
+    alertFramesEl.appendChild(frame);
+  }
+  updateAlertUnlock();
+}
+
+function unlockAlertAudio() {
+  alertAudioUnlocked = true;
+  updateAlertUnlock();
+  for (const frame of alertFramesEl?.children || []) {
+    frame.contentWindow?.postMessage({ type: "unlock-audio" }, "*");
+  }
+}
+
+function updateAlertUnlock() {
+  alertsUnlockEl?.classList.toggle("hidden", alertAudioUnlocked || !activeAlertUrls().length);
+}
+
+function syncAlertsEditButton() {
+  if (!alertsEditBtn) return;
+  const count = savedAlertUrls().length;
+  alertsEditBtn.textContent = count ? `✎ ${count}` : "+ Add";
+  alertsEditBtn.title = count ? "Edit alert sound overlays" : "Add alert sound overlays (StreamElements etc.)";
+}
+
+if (alertsUnlockEl) {
+  alertsUnlockEl.addEventListener("click", unlockAlertAudio);
+  const onFirstGesture = () => {
+    if (!activeAlertUrls().length) return;
+    unlockAlertAudio();
+    document.removeEventListener("pointerdown", onFirstGesture);
+  };
+  document.addEventListener("pointerdown", onFirstGesture);
+}
+
+function emoteImg(url, name) {
+  return `<img class="emote" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
+}
+
+function renderPlainText(text, platform) {
+  if (platform !== "twitch" || !settingOn("showThirdPartyEmotes") || !thirdPartyEmotes.size) return linkifyText(text);
+  return text.split(" ").map((word) => {
+    const url = thirdPartyEmotes.get(word);
+    return url ? emoteImg(url, word) : linkifyText(word);
+  }).join(" ");
 }
 
 
@@ -173,36 +313,71 @@ const EMOTE_IMAGE_URLS = {
 };
 
 function renderMessageText(text, emotes, platform) {
-  if (!emotes || !emotes.length) return linkifyText(text);
+  if (!emotes || !emotes.length) return renderPlainText(text, platform);
   const emoteUrl = EMOTE_IMAGE_URLS[platform] || EMOTE_IMAGE_URLS.twitch;
+  // Array.from splits by code points, matching the server's Python indexing.
+  const chars = Array.from(text);
   const sorted = [...emotes].sort((a, b) => a.begin - b.begin);
   let result = "";
   let cursor = 0;
   for (const emote of sorted) {
     if (emote.begin > cursor) {
-      result += linkifyText(text.slice(cursor, emote.begin));
+      result += renderPlainText(chars.slice(cursor, emote.begin).join(""), platform);
     }
-    result += `<img class="emote" src="${emoteUrl(encodeURIComponent(emote.id))}" alt="${escapeHtml(emote.text)}" title="${escapeHtml(emote.text)}">`;
+    result += emoteImg(emoteUrl(encodeURIComponent(emote.id)), emote.text);
     cursor = emote.end;
   }
-  if (cursor < text.length) {
-    result += linkifyText(text.slice(cursor));
+  if (cursor < chars.length) {
+    result += renderPlainText(chars.slice(cursor).join(""), platform);
   }
   return result;
 }
 
 function formatTime(isoString) {
   try {
-    return new Date(isoString).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    return new Date(isoString).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: !settingOn("use24hClock") });
   } catch (_) {
     return "";
   }
+}
+
+// Messages @-mentioning the broadcaster get highlighted; broadcaster names are
+// collected from the raw Twitch/Kick payloads that ride along with messages.
+const mentionNames = new Set();
+let mentionRegex = null;
+
+function noteMentionNames(message) {
+  const event = message.raw_payload?.payload?.event;
+  const broadcaster = message.raw_payload?.broadcaster;
+  for (const name of [
+    event?.broadcaster_user_login,
+    event?.broadcaster_user_name,
+    broadcaster?.username,
+    broadcaster?.channel_slug,
+  ]) {
+    if (!name) continue;
+    const normalized = String(name).toLowerCase();
+    if (!mentionNames.has(normalized)) {
+      mentionNames.add(normalized);
+      mentionRegex = null;
+    }
+  }
+}
+
+function isMention(message) {
+  if (!settingOn("highlightMentions") || message.message_kind === "system") return false;
+  if (!mentionRegex && mentionNames.size) {
+    const escaped = [...mentionNames].map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    mentionRegex = new RegExp(`@(?:${escaped.join("|")})\\b`, "i");
+  }
+  return Boolean(mentionRegex?.test(message.text));
 }
 
 function normalizeMessages(messages) {
   const map = new Map();
   for (const message of messages) {
     map.set(message.id, message);
+    noteMentionNames(message);
   }
   state.messages = Array.from(map.values())
     .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))
@@ -220,7 +395,8 @@ function renderMessages() {
   const wasNearBottom = isNearBottom();
 
   feedEl.innerHTML = visibleMessages.map((message) => {
-    const messageClass = message.deleted_at ? "message-card deleted" : "message-card";
+    let messageClass = message.deleted_at ? "message-card deleted" : "message-card";
+    if (isMention(message)) messageClass += " mention";
     const readableColor = ensureReadableColor(message.author_color);
     const authorStyle = readableColor ? `style="color:${readableColor}"` : "";
     const sourceBroadcaster = message.raw_payload?.payload?.event?.source_broadcaster || null;
@@ -232,7 +408,7 @@ function renderMessages() {
     if (isSystemNotice) {
       return `
         <article class="${messageClass} system-notice" data-platform="${message.platform}">
-          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
+          <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}<span class="message-text system-notice-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
         </article>
       `;
     }
@@ -246,7 +422,7 @@ function renderMessages() {
 
     return `
       <article class="${messageClass}" data-platform="${message.platform}">
-        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${platformMarkup(message.platform)}${sourceAvatar}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
+        <span class="message-topline"><span class="message-time">${formatTime(message.sent_at)}</span> ${settingOn("showPlatform") ? platformMarkup(message.platform) : ""}${sourceAvatar}${badgesMarkup(message)}<span class="author-name" ${authorStyle}${modAttrs}>${escapeHtml(message.author_display_name)}:</span> <span class="message-text">${renderMessageText(message.text, message.emotes, message.platform)}</span></span>
       </article>
     `;
   }).join("");
@@ -322,6 +498,8 @@ function applyBootstrap(payload) {
       state.statuses.set(status.platform, status);
     }
   }
+  thirdPartyEmotes = new Map(Object.entries(payload.third_party_emotes || {}));
+  applySettings(payload.settings);
   renderStatuses();
   renderMessages();
   handleHypeTrain(payload.hype_train ?? null);
@@ -355,6 +533,16 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "message_deleted") {
     markMessageDeleted(payload);
+    return;
+  }
+  if (payload.type === "third_party_emotes") {
+    thirdPartyEmotes = new Map(Object.entries(payload.emotes || {}));
+    renderMessages();
+    return;
+  }
+  if (payload.type === "settings" && payload.settings) {
+    applySettings(payload.settings);
+    renderMessages();
     return;
   }
   if (payload.type === "hype_train") {
@@ -512,28 +700,174 @@ if (popoutBtn) {
   });
 }
 
-const toggleNames = document.getElementById("toggle-platform-names");
-if (toggleNames) {
-  toggleNames.classList.toggle("active", showPlatformNames);
-  toggleNames.disabled = platformNamesOverride !== null;
-  toggleNames.addEventListener("click", () => {
-    updatePlatformNamesPreference(!showPlatformNames, { broadcast: true });
+// Expand (?expand=1): the main page expands into the popout layout in place.
+const expandToggleBtn = document.getElementById("expand-toggle");
+const feedPanelEl = document.querySelector(".feed-panel");
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let isExpanded = Boolean(expandToggleBtn) && (pageParams.get("expand") ?? "0") !== "0";
+document.documentElement.classList.toggle("expand-mode", isExpanded);
+let expandAnimCleanup = null;
+
+function setExpanded(on, { animate = true } = {}) {
+  if (!expandToggleBtn || on === isExpanded) return;
+  closeModPanel();
+  const firstRect = feedPanelEl.getBoundingClientRect();
+  const wasNearBottom = isNearBottom();
+  isExpanded = on;
+  document.documentElement.classList.toggle("expand-mode", on);
+
+  const params = new URLSearchParams(window.location.search);
+  if (on) {
+    params.set("expand", "1");
+  } else {
+    params.delete("expand");
+  }
+  const query = params.toString();
+  window.history.replaceState(null, "", query ? `?${query}` : window.location.pathname);
+
+  renderAlertFrames();
+  if (animate && !prefersReducedMotion) playExpandTransition(firstRect);
+  if (wasNearBottom) {
+    requestAnimationFrame(() => {
+      feedEl.scrollTop = feedEl.scrollHeight;
+    });
+  }
+}
+
+// FLIP: slide the feed panel from its old rect to where the class flip put it.
+function playExpandTransition(firstRect) {
+  expandAnimCleanup?.();
+  const lastRect = feedPanelEl.getBoundingClientRect();
+  if (!lastRect.width || !lastRect.height) return;
+  feedPanelEl.classList.add("expand-anim");
+  feedPanelEl.style.transition = "none";
+  feedPanelEl.style.transformOrigin = "top left";
+  feedPanelEl.style.transform = `translate(${firstRect.left - lastRect.left}px, ${firstRect.top - lastRect.top}px) `
+    + `scale(${firstRect.width / lastRect.width}, ${firstRect.height / lastRect.height})`;
+  feedPanelEl.getBoundingClientRect(); // flush, so the transition has a start frame
+  feedPanelEl.style.transition = "transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+  feedPanelEl.style.transform = "";
+  const finish = () => {
+    feedPanelEl.classList.remove("expand-anim");
+    feedPanelEl.style.transition = "";
+    feedPanelEl.style.transformOrigin = "";
+    feedPanelEl.style.transform = "";
+    feedPanelEl.removeEventListener("transitionend", finish);
+    clearTimeout(timer);
+    expandAnimCleanup = null;
+  };
+  const timer = setTimeout(finish, 400);
+  feedPanelEl.addEventListener("transitionend", finish);
+  expandAnimCleanup = finish;
+}
+
+if (expandToggleBtn) {
+  expandToggleBtn.addEventListener("click", () => setExpanded(true));
+  document.getElementById("expand-exit").addEventListener("click", () => setExpanded(false));
+  // Registered before the mod panel's Escape handler, so an open panel only closes.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !isExpanded) return;
+    if (isModPanelOpen()) return;
+    setExpanded(false);
   });
 }
 
-window.addEventListener("storage", (e) => {
-  if (platformNamesOverride !== null) return;
-  if (e.key === PLATFORM_NAMES_STORAGE_KEY) {
-    updatePlatformNamesPreference(e.newValue !== "false");
-  }
-});
+const settingToggles = {};
+for (const [key, id] of Object.entries({
+  showPlatform: "toggle-platform",
+  showBadges: "toggle-badges",
+  showThirdPartyEmotes: "toggle-emotes",
+  highlightMentions: "toggle-mentions",
+  use24hClock: "toggle-clock",
+})) {
+  const toggle = document.getElementById(id);
+  if (!toggle) continue;
+  settingToggles[key] = toggle;
+  toggle.classList.toggle("active", settingOn(key));
+  toggle.addEventListener("click", () => updateSetting(key, !settingOn(key)));
+}
 
-if (platformNamesChannel) {
-  platformNamesChannel.addEventListener("message", (event) => {
-    if (platformNamesOverride !== null) return;
-    if (event.data?.type === "showPlatformNames") {
-      updatePlatformNamesPreference(event.data.value);
+// Live preview while dragging; saved to the server on release.
+const fontSlider = document.getElementById("font-size");
+const fontSizeValue = document.getElementById("font-size-value");
+if (fontSlider) {
+  fontSlider.addEventListener("input", () => {
+    document.documentElement.style.setProperty("--chat-font", `${fontSlider.value}px`);
+    fontSizeValue.textContent = `${fontSlider.value}px`;
+  });
+  fontSlider.addEventListener("change", () => {
+    updateSetting("chatFontPx", Number(fontSlider.value));
+  });
+}
+applyChatFont();
+
+if (alertsEditBtn) {
+  const editorEl = document.getElementById("alerts-editor");
+  const rowsEl = document.getElementById("alerts-rows");
+  const applyBtn = document.getElementById("alerts-apply");
+
+  const addRow = (value = "") => {
+    const row = document.createElement("div");
+    row.className = "alerts-row";
+    row.innerHTML = `
+      <input class="input-field alerts-input" type="url" placeholder="https://streamelements.com/overlay/…" spellcheck="false">
+      <button class="alerts-remove" type="button" title="Remove">&#x2715;</button>`;
+    row.querySelector("input").value = value;
+    rowsEl.appendChild(row);
+  };
+
+  alertsEditBtn.addEventListener("click", () => {
+    if (editorEl.classList.contains("hidden")) {
+      rowsEl.innerHTML = "";
+      const urls = savedAlertUrls();
+      (urls.length ? urls : [""]).forEach(addRow);
+      editorEl.classList.remove("hidden");
+      rowsEl.querySelector("input")?.focus();
+    } else {
+      editorEl.classList.add("hidden"); // discard edits; reopening re-reads saved state
     }
+  });
+
+  rowsEl.addEventListener("click", (event) => {
+    const remove = event.target.closest(".alerts-remove");
+    if (!remove) return;
+    remove.closest(".alerts-row").remove();
+    // Removing the last row deletes the saved list and closes the editor.
+    if (!rowsEl.children.length) {
+      updateSetting("alertUrls", []);
+      editorEl.classList.add("hidden");
+    }
+  });
+
+  rowsEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyBtn.click();
+    }
+  });
+
+  document.getElementById("alerts-add-row").addEventListener("click", () => {
+    addRow();
+    rowsEl.lastElementChild.querySelector("input").focus();
+  });
+
+  applyBtn.addEventListener("click", () => {
+    let valid = true;
+    const urls = [];
+    for (const input of rowsEl.querySelectorAll(".alerts-input")) {
+      const value = input.value.trim();
+      input.classList.remove("invalid");
+      if (!value) continue;
+      if (isValidAlertUrl(value)) {
+        urls.push(value);
+      } else {
+        input.classList.add("invalid");
+        valid = false;
+      }
+    }
+    if (!valid) return;
+    updateSetting("alertUrls", urls);
+    editorEl.classList.add("hidden");
   });
 }
 
