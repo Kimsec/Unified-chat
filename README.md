@@ -23,6 +23,11 @@
 </p>
 
 
+> 💡 **Just want a multistream chat without any setup?** Try
+> [**Unified Chat Lite**](https://unified-chat.com) — free, no login, read-only,
+> hosted at unified-chat.com ([source](https://github.com/Kimsec/unified-chat-lite)).
+> This repo is the self-hosted edition with moderation, replies and your own tokens.
+
 ## What it does
 
 - Reads Twitch chat via EventSub WebSocket
@@ -30,9 +35,15 @@
 - Reads Kick chat via webhooks
 - Displays everything in one feed as `timestamp + platform + Name: Message`
 - Twitch and Kick emotes render as inline images
+- 7TV / BTTV / FFZ emotes render in Twitch messages (toggle in Settings)
+- Twitch badges (broadcaster, mod, sub, VIP...) in front of names (toggle in Settings)
+- Mention highlighting, 12/24h clock and chat text size settings
+- StreamElements/Streamlabs alert sounds play in the popout and expanded chat
+- Settings are stored server-side and sync live to every open view, on any device
 - Emote picker for composing messages with your Twitch emotes
 - Reply field that sends to Twitch only
 - Popout chat window for a clean, standalone view
+- Expand mode: one click fills the window with the chat (`?expand=1` in the URL)
 - Clear chat button to wipe message history between streams
 - Optional password protection for public access (LAN access stays open)
 - Stores recent messages in local SQLite for reload/restart
