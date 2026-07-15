@@ -36,14 +36,18 @@
 - Displays everything in one feed as `timestamp + platform + Name: Message`
 - Twitch and Kick emotes render as inline images
 - 7TV / BTTV / FFZ emotes render in Twitch messages (toggle in Settings)
+- Animated cheermotes with the bits amount render in Twitch cheer messages
 - Twitch badges (broadcaster, mod, sub, VIP...) in front of names (toggle in Settings)
 - Mention highlighting, 12/24h clock and chat text size settings
 - StreamElements/Streamlabs alert sounds play in the popout and expanded chat
 - Settings are stored server-side and sync live to every open view, on any device
 - Emote picker for composing messages with your Twitch emotes
-- Reply field that sends to Twitch only
+- Reply field that sends to Twitch, Kick, or both at once — with per-message
+  reply threading (Reply in the name-click panel)
 - Popout chat window for a clean, standalone view
 - Expand mode: one click fills the window with the chat (`?expand=1` in the URL)
+- OBS overlay: `/overlay?token=...` as a transparent Browser source with
+  auto-fading messages (`fade=<s>`, `size=<px>`, `align=right`, `max=<n>`, `icons=0`)
 - Clear chat button to wipe message history between streams
 - Optional password protection for public access (LAN access stays open)
 - Stores recent messages in local SQLite for reload/restart
@@ -254,7 +258,9 @@ If your username or paths differ, edit `unified-chat.service` first or use `unif
 ## Important Limitations
 
 - By default (standalone mode) Unified Chat manages and refreshes its own Twitch token. When used with `stream-control`, leave `TWITCH_CLIENT_SECRET` empty and it reads the shared token read-only (`stream-control` handles refresh)
-- Replies go to Twitch only
-- YouTube and Kick messages are not cross-posted anywhere
+- Replies go to Twitch and/or Kick (YouTube is read-only)
+- Kick replies without a user token are sent by your app's bot identity;
+  authorize via `/auth/kick/start` with the `chat:write` scope to send as yourself
+- Incoming messages are not cross-posted between platforms
 - Kick webhooks require a public HTTPS URL
 - Twitch and Kick emotes render as inline images (YouTube messages show as text)
