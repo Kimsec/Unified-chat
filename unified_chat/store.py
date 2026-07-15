@@ -55,6 +55,14 @@ class MessageStore:
                 ON messages(platform, platform_message_id)
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ui_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             # Migration: add emotes_json column if missing
             columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
             if "message_kind" not in columns:
@@ -143,6 +151,28 @@ class MessageStore:
             self._conn.commit()
             self._conn.execute("VACUUM")
 
+
+    def get_ui_settings(self) -> dict:
+        with self._lock:
+            rows = self._conn.execute("SELECT key, value FROM ui_settings").fetchall()
+        settings = {}
+        for row in rows:
+            try:
+                settings[row["key"]] = json.loads(row["value"])
+            except ValueError:
+                pass
+        return settings
+
+    def set_ui_setting(self, key: str, value: bool | int | list[str]) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO ui_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, dumps_json(value)),
+            )
+            self._conn.commit()
 
     def list_messages(self, limit: int = 200) -> list[UnifiedMessage]:
         safe_limit = max(1, min(int(limit), 500))
