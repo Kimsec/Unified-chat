@@ -545,6 +545,7 @@ class TwitchConnector(BaseConnector):
             avatar_url=source_avatar_url,
             badges=badges,
             emotes=emotes,
+            bits=int((event.get("cheer") or {}).get("bits") or 0),
             text=text,
             sent_at=parse_datetime(metadata.get("message_timestamp")) or utcnow(),
             raw_payload={"metadata": metadata, "payload": {**payload, "event": event}},
@@ -692,7 +693,7 @@ class TwitchConnector(BaseConnector):
                     self.log.warning("Twitch %s emotes error: %s", label, exc)
         return emotes
 
-    async def send_reply(self, message_text: str) -> dict[str, Any]:
+    async def send_reply(self, message_text: str, reply_to_message_id: str | None = None) -> dict[str, Any]:
         content = (message_text or "").strip()
         if not content:
             raise ValueError("Reply message is empty")
@@ -702,6 +703,8 @@ class TwitchConnector(BaseConnector):
             "sender_id": self.settings.twitch_broadcaster_id,
             "message": content[:500],
         }
+        if reply_to_message_id:
+            payload["reply_parent_message_id"] = str(reply_to_message_id)
         token = self._load_access_token()
         if not token:
             raise RuntimeError("No Twitch access token found")
