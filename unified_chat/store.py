@@ -75,6 +75,8 @@ class MessageStore:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN deleted_at TEXT")
             if "author_id" not in columns:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN author_id TEXT")
+            if "bits" not in columns:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN bits INTEGER NOT NULL DEFAULT 0")
             self._conn.commit()
 
     def add_message(self, message: UnifiedMessage) -> bool:
@@ -92,6 +94,7 @@ class MessageStore:
             message.avatar_url,
             dumps_json([badge.model_dump() for badge in message.badges]),
             dumps_json([emote.model_dump() for emote in message.emotes]),
+            message.bits,
             message.text,
             message.sent_at.isoformat(),
             message.deleted_at.isoformat() if message.deleted_at else None,
@@ -105,8 +108,8 @@ class MessageStore:
                     INSERT INTO messages (
                         id, platform, platform_message_id, message_kind, notice_type, channel_id,
                         author_display_name, author_login, author_id, author_color, avatar_url,
-                        badges_json, emotes_json, text, sent_at, deleted_at, raw_payload_json, inserted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        badges_json, emotes_json, bits, text, sent_at, deleted_at, raw_payload_json, inserted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -205,6 +208,7 @@ class MessageStore:
             avatar_url=row["avatar_url"],
             badges=badges,
             emotes=emotes,
+            bits=row["bits"] or 0,
             text=row["text"],
             sent_at=row["sent_at"],
             deleted_at=row["deleted_at"],
