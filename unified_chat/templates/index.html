@@ -118,6 +118,8 @@
                         <svg viewBox="0 0 512 512" aria-hidden="true"><path fill="currentColor" d="M47.6 300.4L228.3 469.1c7.5 7 17.4 10.9 27.7 10.9s20.2-3.9 27.7-10.9L464.4 300.4c30.4-28.3 47.6-68 47.6-109.5v-5.8c0-69.9-50.5-129.5-119.4-141C347 36.5 300.6 51.4 268 84L256 96 244 84c-32.6-32.6-79-47.5-124.6-39.9C50.5 55.6 0 115.2 0 185.1v5.8c0 41.5 17.2 81.2 47.6 109.5z"/></svg>
                         Donate
                     </a>
+                    <button id="open-info" class="ghost-button small-button info-button" type="button"
+                        title="How this app works">&#9432; More info</button>
                 </div>
                 <p class="about-credit">Made with <span class="heart">❤</span> by Kim AH</p>
             </section>
@@ -152,9 +154,28 @@
                     <input id="emote-search" class="emote-search" type="text" placeholder="Search emotes...">
                     <div id="emote-grid" class="emote-grid"></div>
                 </div>
+                <div id="reply-context" class="reply-context hidden">
+                    <span id="reply-context-text"></span>
+                    <button id="reply-context-clear" type="button" title="Cancel reply">✕</button>
+                </div>
                 <form id="reply-form" class="reply-form-inline">
-                    <input id="reply-message" name="message" type="text" maxlength="500"
-                        placeholder="Reply to Twitch..." class="reply-input">
+                    <div class="reply-input-wrap">
+                        <input id="reply-message" name="message" type="text" maxlength="500"
+                            placeholder="Reply to Twitch..." class="reply-input">
+                        <button id="reply-target-toggle" class="reply-target-toggle" type="button"
+                            title="Choose where to send"></button>
+                        <div id="reply-target-menu" class="reply-target-menu hidden">
+                            <button class="reply-target-option" data-target="twitch" type="button">
+                                <svg viewBox="0 0 256 268" aria-hidden="true"><path fill="#9146ff" d="M17.46 0L0 46.56v185.21h63.14V268h46.87l36.49-36.23h54.91L256 177.68V0H17.46zm23.07 23.07H232.9v143.14l-41.47 41.47h-69.15L85.79 244.2v-36.52H40.53V23.07zm69.15 104.55h23.07V69.26h-23.07v58.36zm63.14 0h23.07V69.26h-23.07v58.36z"/></svg>
+                                Twitch</button>
+                            <button class="reply-target-option" data-target="kick" type="button">
+                                <img src="/static/kick-logo.ico" alt="">
+                                Kick</button>
+                            <button class="reply-target-option" data-target="all" type="button">
+                                <span class="reply-target-all">ALL</span>
+                                Both</button>
+                        </div>
+                    </div>
                     <button id="emote-toggle" class="emote-toggle" type="button" title="Emotes">😊</button>
                     <button type="submit" class="primary-button">Send</button>
                 </form>
@@ -165,6 +186,73 @@
             <button id="expand-exit" class="expand-exit" type="button" title="Collapse the chat (Esc)">✕</button>
         </div>
         <div id="alert-frames" class="alert-frames" aria-hidden="true"></div>
+    </div>
+
+    <div id="info-overlay" class="info-overlay hidden">
+        <div class="info-dialog panel" role="dialog" aria-modal="true" aria-labelledby="info-title">
+            <div class="info-header">
+                <h2 id="info-title">Tips &amp; tricks</h2>
+                <button id="close-info" class="info-close" type="button" title="Close">&#x2715;</button>
+            </div>
+            <div class="info-body">
+                <section>
+                    <h3>Reply &amp; send</h3>
+                    <ul>
+                        <li>The icon at the end of the input picks where to send: Twitch, Kick or both</li>
+                        <li>Click a name &rarr; <strong>Reply</strong> &mdash; the answer threads on that
+                            platform</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Moderation</h3>
+                    <ul>
+                        <li>Click a name &rarr; <strong>Delete msg</strong>, <strong>Ban</strong> or
+                            <strong>Timeout</strong> (Twitch + Kick)</li>
+                        <li>Every action asks <strong>Confirm?</strong> first</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Expand &amp; popout</h3>
+                    <ul>
+                        <li><strong>Expand</strong> (top right) fills the window with the chat; <strong>&#x2715;</strong>
+                            or <strong>Esc</strong> brings the page back</li>
+                        <li>Bookmark the URL while expanded &mdash; it opens straight into it</li>
+                        <li><strong>/popout?token=&hellip;</strong> embeds anywhere without login (e.g.
+                            stream-control)</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>OBS overlay</h3>
+                    <ul>
+                        <li>Add <strong>/overlay?token=&hellip;</strong> as a Browser source &mdash; transparent,
+                            messages fade after 60 s</li>
+                        <li>Tune it: <strong>&amp;fade=120</strong>, <strong>&amp;size=20</strong>,
+                            <strong>&amp;align=right</strong>, <strong>&amp;max=10</strong>,
+                            <strong>&amp;icons=0</strong></li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Alert sounds</h3>
+                    <ul>
+                        <li>Settings &rarr; Alert sounds: paste your alert overlay URL (StreamElements etc.) &mdash;
+                            its sound plays in the popout and expanded chat</li>
+                        <li>Click <strong>&#128266; Enable alert sound</strong> once per visit (browser rule)</li>
+                        <li><strong>&amp;alerts=0</strong> mutes them on one page (e.g. an OBS source)</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Good to know</h3>
+                    <ul>
+                        <li>Settings are global &mdash; stored on the server and synced live to every open
+                            view, on any device</li>
+                        <li>URL params override per page: <strong>platform/badges/emotes/mentions/clock=0</strong>,
+                            <strong>size=18</strong></li>
+                        <li>Messages that @-mention you are highlighted</li>
+                        <li>Deleted messages stay, with a strikethrough</li>
+                    </ul>
+                </section>
+            </div>
+        </div>
     </div>
 
     <script>
