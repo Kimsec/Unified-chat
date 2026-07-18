@@ -558,6 +558,7 @@ function applyBootstrap(payload) {
   renderStatuses();
   renderMessages();
   handleHypeTrain(payload.hype_train ?? null);
+  handlePoll(payload.poll ?? null);
 }
 
 function markMessageDeleted(payload) {
@@ -602,6 +603,10 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "hype_train") {
     handleHypeTrain(payload);
+    return;
+  }
+  if (payload.type === "poll") {
+    handlePoll(payload);
   }
 }
 
@@ -655,6 +660,78 @@ function handleHypeTrain(data) {
   }
 
   renderHypeTrain(data);
+}
+
+let pollEndTimer = null;
+
+function resetPollBar() {
+  if (pollEndTimer) {
+    clearTimeout(pollEndTimer);
+    pollEndTimer = null;
+  }
+  const bar = document.getElementById("poll-bar");
+  if (!bar) return;
+  bar.classList.add("hidden");
+  bar.setAttribute("aria-hidden", "true");
+}
+
+function handlePoll(data) {
+  if (isOverlay) return;
+  if (!data) {
+    resetPollBar();
+    return;
+  }
+  if (pollEndTimer) {
+    clearTimeout(pollEndTimer);
+    pollEndTimer = null;
+  }
+  renderPoll(data);
+  if (data.phase === "end") {
+    pollEndTimer = window.setTimeout(resetPollBar, data.hide_after_ms ?? 18000);
+  }
+}
+
+function pollChoiceMarkup(choice, pct, winner) {
+  return `
+    <div class="poll-choice${winner ? " winner" : ""}">
+      <div class="poll-choice-info"><span class="poll-choice-title">${escapeHtml(choice.title)}</span><span class="poll-choice-votes">${choice.votes} · ${pct}%</span></div>
+      <div class="poll-choice-track"><div class="poll-choice-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
+}
+
+function renderPoll(data) {
+  const bar = document.getElementById("poll-bar");
+  if (!bar) return;
+  bar.classList.remove("hidden");
+  bar.setAttribute("aria-hidden", "false");
+  const choices = (data.choices || []).map((choice) => ({ title: choice.title || "", votes: choice.votes || 0 }));
+  const total = choices.reduce((sum, choice) => sum + choice.votes, 0);
+  const maxVotes = Math.max(0, ...choices.map((choice) => choice.votes));
+  const ended = data.phase === "end";
+  document.getElementById("poll-title").textContent = data.title || "Poll";
+  document.getElementById("poll-status").textContent = ended
+    ? `Final · ${total} vote${total === 1 ? "" : "s"}`
+    : `${total} vote${total === 1 ? "" : "s"}`;
+
+  const rowsEl = document.getElementById("poll-choices");
+  const existing = rowsEl.querySelectorAll(".poll-choice");
+  if (existing.length === choices.length && choices.length) {
+    // Update in place so the fill bars animate between votes.
+    choices.forEach((choice, index) => {
+      const pct = total ? Math.round((choice.votes / total) * 100) : 0;
+      const row = existing[index];
+      row.classList.toggle("winner", ended && choice.votes === maxVotes && maxVotes > 0);
+      row.querySelector(".poll-choice-title").textContent = choice.title;
+      row.querySelector(".poll-choice-votes").textContent = `${choice.votes} · ${pct}%`;
+      row.querySelector(".poll-choice-fill").style.width = `${pct}%`;
+    });
+    return;
+  }
+  rowsEl.innerHTML = choices.map((choice) => {
+    const pct = total ? Math.round((choice.votes / total) * 100) : 0;
+    return pollChoiceMarkup(choice, pct, ended && choice.votes === maxVotes && maxVotes > 0);
+  }).join("");
 }
 
 function renderHypeTrain(data) {

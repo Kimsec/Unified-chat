@@ -46,6 +46,7 @@ class Runtime:
         self.kick = KickConnector(settings, self.service)
         self.connectors = [self.twitch, self.youtube, self.kick]
         self._next_hype_train_backfill_at = 0.0
+        self._next_poll_backfill_at = 0.0
         self._hype_train_backfill_ttl_sec = 15.0
         self.third_party_emotes: dict[str, str] = {}
         self._emotes_task: asyncio.Task | None = None
@@ -103,12 +104,31 @@ class Runtime:
         if hype_train is not None:
             self.service.set_hype_train(hype_train)
 
+    async def maybe_backfill_poll(self) -> None:
+        if self.service.get_poll() is not None:
+            return
+
+        now = time.monotonic()
+        if now < self._next_poll_backfill_at:
+            return
+        self._next_poll_backfill_at = now + self._hype_train_backfill_ttl_sec
+
+        try:
+            poll = await self.twitch.get_poll_status()
+        except Exception as exc:
+            log.warning("Poll backfill failed: %s", exc)
+            return
+
+        if poll is not None:
+            self.service.set_poll(poll)
+
     async def get_ui_settings(self) -> dict:
         stored = await asyncio.to_thread(self.store.get_ui_settings)
         return {key: stored.get(key, default) for key, default in UI_SETTING_DEFAULTS.items()}
 
     async def build_bootstrap(self, limit: int = 200) -> dict:
         await self.maybe_backfill_hype_train()
+        await self.maybe_backfill_poll()
         self.maybe_refresh_emotes()
         payload = await self.service.bootstrap_event(limit)
         payload["third_party_emotes"] = self.third_party_emotes

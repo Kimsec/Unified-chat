@@ -39,6 +39,10 @@ class TwitchConnector(BaseConnector):
     HYPE_TRAIN_PROGRESS = "channel.hype_train.progress"
     HYPE_TRAIN_END = "channel.hype_train.end"
     HYPE_TRAIN_TYPES = frozenset({HYPE_TRAIN_BEGIN, HYPE_TRAIN_PROGRESS, HYPE_TRAIN_END})
+    POLL_BEGIN = "channel.poll.begin"
+    POLL_PROGRESS = "channel.poll.progress"
+    POLL_END = "channel.poll.end"
+    POLL_TYPES = frozenset({POLL_BEGIN, POLL_PROGRESS, POLL_END})
     CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION = "channel.channel_points_custom_reward_redemption.add"
     SUBSCRIBE_URL = "https://api.twitch.tv/helix/eventsub/subscriptions"
     CHAT_URL = "https://api.twitch.tv/helix/chat/messages"
@@ -46,6 +50,7 @@ class TwitchConnector(BaseConnector):
     MODERATION_CHAT_URL = "https://api.twitch.tv/helix/moderation/chat"
     USERS_URL = "https://api.twitch.tv/helix/users"
     HYPE_TRAIN_STATUS_URL = "https://api.twitch.tv/helix/hypetrain/status"
+    POLLS_URL = "https://api.twitch.tv/helix/polls"
     AUTHORIZE_URL = "https://id.twitch.tv/oauth2/authorize"
     TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 
@@ -322,6 +327,15 @@ class TwitchConnector(BaseConnector):
     async def _subscribe_hype_train_end(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
         return await self._subscribe_eventsub(session, session_id, self.HYPE_TRAIN_END, version="2", condition=self._hype_train_condition())
 
+    async def _subscribe_poll_begin(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.POLL_BEGIN, condition=self._hype_train_condition())
+
+    async def _subscribe_poll_progress(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.POLL_PROGRESS, condition=self._hype_train_condition())
+
+    async def _subscribe_poll_end(self, session: aiohttp.ClientSession, session_id: str) -> SubscribeResult:
+        return await self._subscribe_eventsub(session, session_id, self.POLL_END, condition=self._hype_train_condition())
+
     async def _subscribe_channel_points_redemption(
         self,
         session: aiohttp.ClientSession,
@@ -361,6 +375,104 @@ class TwitchConnector(BaseConnector):
             "ended_at": event.get("ended_at"),
             "cooldown_ends_at": event.get("cooldown_ends_at"),
         }
+
+    def _normalize_poll_payload(
+        self,
+        event: dict[str, Any],
+        *,
+        phase: str,
+        ends_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(event, dict):
+            return None
+
+        poll_id = str(event.get("id") or "")
+        if not poll_id:
+            return None
+
+        choices = [
+            {
+                "title": str(choice.get("title") or ""),
+                "votes": self._coerce_int(choice.get("votes"), 0),
+            }
+            for choice in event.get("choices") or []
+            if isinstance(choice, dict)
+        ]
+        return {
+            "type": "poll",
+            "id": poll_id,
+            "phase": phase,
+            "title": str(event.get("title") or ""),
+            "choices": choices,
+            "status": str(event.get("status") or "") or None,
+            "started_at": event.get("started_at"),
+            "ends_at": event.get("ends_at") or ends_at,
+        }
+
+    def _map_poll_event(
+        self,
+        subscription_type: str,
+        metadata: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        event = payload.get("event") or {}
+        phase_map = {
+            self.POLL_BEGIN: "begin",
+            self.POLL_PROGRESS: "progress",
+            self.POLL_END: "end",
+        }
+        phase = phase_map.get(subscription_type)
+        if not phase:
+            return None
+        return self._normalize_poll_payload(event, phase=phase)
+
+    async def get_poll_status(self) -> dict[str, Any] | None:
+        token = self._load_access_token()
+        if not token:
+            return None
+
+        headers = {
+            "Client-Id": self.settings.twitch_client_id,
+            "Authorization": f"Bearer {token}",
+        }
+
+        try:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+                async with session.get(
+                    self.POLLS_URL,
+                    headers=headers,
+                    params={"broadcaster_id": self.settings.twitch_broadcaster_id, "first": "1"},
+                    timeout=_HTTP_TIMEOUT,
+                ) as response:
+                    if response.status == 200:
+                        payload = await response.json(content_type=None)
+                    else:
+                        detail = await response.text()
+                        if response.status in (401, 403):
+                            self.log.warning(
+                                "Twitch poll status unavailable (missing channel:read:polls?): %s",
+                                detail[:200],
+                            )
+                        else:
+                            self.log.warning("Twitch poll status failed %d: %s", response.status, detail[:200])
+                        return None
+        except Exception as exc:
+            self.log.warning("Twitch poll status request error: %s", exc)
+            return None
+
+        items = (payload or {}).get("data") or []
+        item = items[0] if items else None
+        if not item or str(item.get("status") or "").upper() != "ACTIVE":
+            return None
+
+        # Helix has no ends_at; derive it from started_at + duration for pruning.
+        started_at = parse_datetime(item.get("started_at"))
+        duration = self._coerce_int(item.get("duration"), 0)
+        ends_at = (started_at + timedelta(seconds=duration)).isoformat() if started_at and duration else None
+        normalized = self._normalize_poll_payload(item, phase="progress", ends_at=ends_at)
+        if normalized is not None:
+            self.log.info("Loaded active Twitch poll via Helix backfill")
+        return normalized
 
     async def get_hype_train_status(self) -> dict[str, Any] | None:
         token = self._load_access_token()
@@ -889,6 +1001,9 @@ class TwitchConnector(BaseConnector):
                             (self.HYPE_TRAIN_BEGIN, self._subscribe_hype_train_begin),
                             (self.HYPE_TRAIN_PROGRESS, self._subscribe_hype_train_progress),
                             (self.HYPE_TRAIN_END, self._subscribe_hype_train_end),
+                            (self.POLL_BEGIN, self._subscribe_poll_begin),
+                            (self.POLL_PROGRESS, self._subscribe_poll_progress),
+                            (self.POLL_END, self._subscribe_poll_end),
                             (self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION, self._subscribe_channel_points_redemption),
                         )
                         subscribed = {st: False for st, _ in _all_subs}
@@ -1065,6 +1180,11 @@ class TwitchConnector(BaseConnector):
                                         ht_data = self._map_hype_train_event(subscription_type, metadata, payload)
                                         if ht_data:
                                             await self.service.broadcast_hype_train(ht_data)
+                                    elif subscription_type in self.POLL_TYPES:
+                                        subscribed[subscription_type] = True
+                                        poll_data = self._map_poll_event(subscription_type, metadata, payload)
+                                        if poll_data:
+                                            await self.service.broadcast_poll(poll_data)
                                     elif subscription_type == self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION:
                                         subscribed[self.CHANNEL_POINTS_REDEMPTION_SUBSCRIPTION] = True
                                         unified = self._map_redemption_message(metadata, payload)

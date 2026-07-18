@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable
 
 from unified_chat.hub import WebSocketHub
@@ -13,6 +13,7 @@ from unified_chat.utils import parse_datetime, utcnow
 
 class ChatService:
     HYPE_TRAIN_END_GRACE_SEC = 5.0
+    POLL_END_GRACE_SEC = 18.0
 
     def __init__(self, store: MessageStore) -> None:
         self.store = store
@@ -24,6 +25,8 @@ class ChatService:
         }
         self._hype_train: dict | None = None
         self._hype_train_hide_at: float | None = None
+        self._poll: dict | None = None
+        self._poll_hide_at: float | None = None
 
     async def clear_messages(self) -> None:
         await asyncio.to_thread(self.store.clear_messages)
@@ -116,6 +119,59 @@ class ChatService:
         payload = self.get_hype_train() or dict(data)
         await self.hub.broadcast(payload)
 
+    def _clear_poll(self) -> None:
+        self._poll = None
+        self._poll_hide_at = None
+
+    def _prune_poll(self) -> dict | None:
+        if self._poll is None:
+            return None
+
+        if self._poll.get("phase") == "end":
+            hide_at = self._poll_hide_at or 0.0
+            if time.monotonic() >= hide_at:
+                self._clear_poll()
+                return None
+            return self._poll
+
+        # Slack past ends_at so a slightly late end event still lands.
+        ends_at = parse_datetime(self._poll.get("ends_at"))
+        if ends_at is not None and ends_at + timedelta(seconds=30) <= utcnow():
+            self._clear_poll()
+            return None
+        return self._poll
+
+    def _serialize_poll(self, data: dict) -> dict:
+        payload = dict(data)
+        if payload.get("phase") == "end":
+            hide_at = self._poll_hide_at or time.monotonic()
+            remaining_ms = max(int((hide_at - time.monotonic()) * 1000), 0)
+            payload["hide_after_ms"] = remaining_ms
+        return payload
+
+    def set_poll(self, data: dict | None) -> dict | None:
+        if not data:
+            self._clear_poll()
+            return None
+
+        self._poll = dict(data)
+        if self._poll.get("phase") == "end":
+            self._poll_hide_at = time.monotonic() + self.POLL_END_GRACE_SEC
+        else:
+            self._poll_hide_at = None
+        return self._prune_poll()
+
+    def get_poll(self) -> dict | None:
+        current = self._prune_poll()
+        if current is None:
+            return None
+        return self._serialize_poll(current)
+
+    async def broadcast_poll(self, data: dict) -> None:
+        self.set_poll(data)
+        payload = self.get_poll() or dict(data)
+        await self.hub.broadcast(payload)
+
     _STATUS_BROADCAST_FIELDS = ("state", "connected", "auth_ready", "detail", "last_error")
 
     async def set_status(self, platform: str, **updates) -> ConnectorStatus:
@@ -138,6 +194,7 @@ class ChatService:
             "messages": [message.model_dump(mode="json") for message in messages],
             "statuses": [status.model_dump(mode="json") for status in self.get_statuses()],
             "hype_train": self.get_hype_train(),
+            "poll": self.get_poll(),
         }
 
     def overall_state(self) -> str:

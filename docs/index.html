@@ -174,6 +174,13 @@
                         <div id="ht-fill" class="hype-train-fill"></div>
                     </div>
                 </div>
+                <div id="poll-bar" class="poll-bar hidden" role="status" aria-live="polite" aria-hidden="true">
+                    <div class="poll-info">
+                        <span id="poll-title" class="poll-title"></span>
+                        <span id="poll-status"></span>
+                    </div>
+                    <div id="poll-choices" class="poll-choices"></div>
+                </div>
                 <div class="feed-wrapper">
                     <div id="feed" class="feed" aria-live="polite"></div>
                     <button id="scroll-bottom" class="scroll-bottom hidden" type="button" title="Scroll to bottom">↓</button>
@@ -1082,6 +1089,71 @@ function scheduleHypeTrain() {
   setTimeout(runHypeTrain, randomInt(15000, 30000));
 }
 
+// Poll (demo: runs on its own every couple of minutes)
+const pollBar = document.getElementById("poll-bar");
+const POLL_QUESTIONS = [
+  { title: "What game next?", choices: ["Ranked", "Variety", "Viewer games"] },
+  { title: "Snack break?", choices: ["Yes", "No", "Only if pizza"] },
+  { title: "Best platform chat?", choices: ["Twitch", "Kick", "YouTube"] },
+];
+
+function renderPollDemo(poll, ended) {
+  pollBar.classList.remove("hidden");
+  pollBar.setAttribute("aria-hidden", "false");
+  const total = poll.votes.reduce((sum, votes) => sum + votes, 0);
+  const maxVotes = Math.max(0, ...poll.votes);
+  document.getElementById("poll-title").textContent = poll.title;
+  document.getElementById("poll-status").textContent = ended ? `Final · ${total} votes` : `${total} votes`;
+  const rowsEl = document.getElementById("poll-choices");
+  const existing = rowsEl.querySelectorAll(".poll-choice");
+  if (existing.length === poll.choices.length) {
+    poll.choices.forEach((title, index) => {
+      const pct = total ? Math.round((poll.votes[index] / total) * 100) : 0;
+      const row = existing[index];
+      row.classList.toggle("winner", ended && poll.votes[index] === maxVotes && maxVotes > 0);
+      row.querySelector(".poll-choice-votes").textContent = `${poll.votes[index]} · ${pct}%`;
+      row.querySelector(".poll-choice-fill").style.width = `${pct}%`;
+    });
+    return;
+  }
+  rowsEl.innerHTML = poll.choices.map((title, index) => {
+    const pct = total ? Math.round((poll.votes[index] / total) * 100) : 0;
+    return `
+      <div class="poll-choice">
+        <div class="poll-choice-info"><span class="poll-choice-title">${escapeHtml(title)}</span><span class="poll-choice-votes">${poll.votes[index]} · ${pct}%</span></div>
+        <div class="poll-choice-track"><div class="poll-choice-fill" style="width:${pct}%"></div></div>
+      </div>
+    `;
+  }).join("");
+}
+
+function runPoll() {
+  const question = pick(POLL_QUESTIONS);
+  const poll = { title: question.title, choices: question.choices, votes: question.choices.map(() => 0) };
+  renderPollDemo(poll, false);
+  let ticks = 0;
+  const tick = setInterval(() => {
+    ticks += 1;
+    for (let vote = randomInt(1, 4); vote > 0; vote -= 1) {
+      poll.votes[randomInt(0, poll.votes.length - 1)] += 1;
+    }
+    renderPollDemo(poll, false);
+    if (ticks >= 14) {
+      clearInterval(tick);
+      renderPollDemo(poll, true);
+      setTimeout(() => {
+        pollBar.classList.add("hidden");
+        pollBar.setAttribute("aria-hidden", "true");
+      }, 18000);
+      setTimeout(schedulePoll, randomInt(90000, 150000));
+    }
+  }, 2000);
+}
+
+function schedulePoll() {
+  setTimeout(runPoll, randomInt(35000, 60000));
+}
+
 // Expand (?expand=1)
 const expandToggleBtn = document.getElementById("expand-toggle");
 const feedPanelEl = document.querySelector(".feed-panel");
@@ -1208,6 +1280,7 @@ applySettings();
 syncAlertsEditButton();
 setTimeout(simulationTick, 1200);
 scheduleHypeTrain();
+schedulePoll();
 </script>
 </body>
 </html>

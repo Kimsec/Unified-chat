@@ -1012,6 +1012,87 @@ h2 {
     transition: width 400ms ease;
 }
 
+.poll-bar {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--panel-border);
+    background: rgba(56, 189, 248, 0.06);
+    max-height: 260px;
+    opacity: 1;
+    overflow: hidden;
+    transition: opacity 500ms ease, max-height 500ms ease, padding 500ms ease;
+}
+
+.poll-bar.hidden {
+    max-height: 0;
+    opacity: 0;
+    padding: 0 14px;
+    border-bottom: none;
+    pointer-events: none;
+}
+
+.poll-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.82rem;
+    margin-bottom: 6px;
+}
+
+.poll-title {
+    font-weight: 700;
+    color: var(--text);
+}
+
+#poll-status {
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.poll-choices {
+    display: grid;
+    gap: 6px;
+    padding-bottom: 2px;
+}
+
+.poll-choice-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.78rem;
+    margin-bottom: 3px;
+}
+
+.poll-choice-votes {
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.poll-choice-track {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.poll-choice-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #9146ff, #38bdf8);
+    transition: width 400ms ease;
+}
+
+.poll-choice.winner .poll-choice-title {
+    color: #ffd700;
+}
+
+.poll-choice.winner .poll-choice-fill {
+    background: linear-gradient(90deg, #9146ff, #ffd700);
+}
+
 .feed-panel {
     grid-row: 1 / -1;
     grid-column: 2;
@@ -1478,8 +1559,9 @@ html.expand-mode .feed {
     max-height: none;
 }
 
-/* Keeps the hype train percentage clear of the floating ✕ button. */
-html.expand-mode .hype-train-bar {
+/* Keeps the hype train / poll text clear of the floating ✕ button. */
+html.expand-mode .hype-train-bar,
+html.expand-mode .poll-bar {
     padding-right: 48px;
 }
 
@@ -1640,6 +1722,7 @@ html.overlay-mode .feed-panel {
 
 html.overlay-mode .scroll-bottom,
 html.overlay-mode .hype-train-bar,
+html.overlay-mode .poll-bar,
 html.overlay-mode .reply-form-inline,
 html.overlay-mode .reply-context,
 html.overlay-mode .reply-status,
