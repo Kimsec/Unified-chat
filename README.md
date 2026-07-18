@@ -37,6 +37,7 @@
 - Twitch and Kick emotes render as inline images
 - 7TV / BTTV / FFZ emotes render in Twitch messages (toggle in Settings)
 - Animated cheermotes with the bits amount render in Twitch cheer messages
+- Twitch polls render live above the chat: votes per choice, winner highlighted
 - Twitch badges (broadcaster, mod, sub, VIP...) in front of names (toggle in Settings)
 - Mention highlighting, 12/24h clock and chat text size settings
 - StreamElements/Streamlabs alert sounds play in the popout and expanded chat
@@ -100,7 +101,7 @@ If you already run `stream-control`, you can reuse your existing credentials.
 3. Copy the numeric User ID (e.g. `424350540`)
 
 > Unified Chat reads `twitch_tokens.json` but never writes to it. Token refresh is handled by `stream-control`.
-> For the hype train bar and API backfill after refresh/reconnect, the shared token must also include `channel:read:hype_train`. After adding that scope in `stream-control`, re-authorize so Twitch issues a token with the updated scope set.
+> For the hype train and poll bars (and their API backfill after refresh/reconnect), the shared token must also include `channel:read:hype_train` and `channel:read:polls`. After adding those scopes in `stream-control`, re-authorize so Twitch issues a token with the updated scope set.
 
 ---
 
